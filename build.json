@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.46-preview.2",
+  "version": "0.3.47-preview.1",
   "channel": "preview",
   "audience": "public",
-  "sourceCommit": "6fe507e1162668e20b8a2c6519de05729552d9a7",
+  "sourceCommit": "829d08663cb06289d92c3423814e7e88389ec853",
   "sourceDirty": false,
   "skills": [
     "build-dashboard",
@@ -30,6 +30,7 @@
     "show-sites",
     "show-tasks",
     "subset-dataset",
+    "validate-trimsaw-sizes",
     "zira-help"
   ],
   "restrictions": {

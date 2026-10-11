@@ -1,0 +1,6 @@
+interface:
+  display_name: "Zira Help"
+  short_description: "Get product and API answers from Zira documentation"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $zira-help to help me use Zira."

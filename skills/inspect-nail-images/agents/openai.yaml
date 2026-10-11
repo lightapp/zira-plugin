@@ -1,0 +1,6 @@
+interface:
+  display_name: "Inspect Nail Images"
+  short_description: "Inspect nail heads, wood detail and movement"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $inspect-nail-images to inspect nail heads and surrounding wood in my local images and explain the visual evidence."

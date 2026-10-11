@@ -1,0 +1,35 @@
+{
+  "name": "zira",
+  "displayName": "Zira",
+  "version": "0.3.46-preview.1",
+  "description": "Run Zira from your AI chat: ask about production data, check device health, build and schedule readings reports, manage tasks and set up vision devices.",
+  "author": {
+    "name": "Zira",
+    "url": "https://zira.us"
+  },
+  "homepage": "https://zira.us",
+  "keywords": [
+    "zira",
+    "operations",
+    "device health",
+    "manufacturing",
+    "vision"
+  ],
+  "hooks": [
+    "./hooks/claude-session-start.json",
+    "./mods/hooks.json"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "default_company": {
+      "type": "string",
+      "title": "Default Zira company (optional)",
+      "description": "Company name the Zira skills use when you don't name one. Leave empty to choose each time. It is a preference; your Zira account still decides access."
+    },
+    "default_site": {
+      "type": "string",
+      "title": "Default Zira site (optional)",
+      "description": "Site name the Zira skills use when you don't name one. Leave empty to choose each time."
+    }
+  }
+}

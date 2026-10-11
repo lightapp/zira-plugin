@@ -1,0 +1,6 @@
+interface:
+  display_name: "Set Up a Vision Device"
+  short_description: "Step-by-step vision setup with the next action"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $setup-vision to set up a Zira vision device."

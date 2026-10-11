@@ -1,0 +1,6 @@
+interface:
+  display_name: "Duplicate a Dashboard"
+  short_description: "Copy a dashboard, mapping data sources for another site"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $duplicate-dashboard to copy a Zira dashboard to another site."

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Create a Dataset Subset"
+  short_description: "A smaller dataset with enough images of each class"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $subset-dataset to make a dataset with at least 100 images of each class."

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Open a Dataset"
+  short_description: "Open a Vision dataset, models or validation in Zira"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $open-dataset to open my Zira vision dataset for annotation."

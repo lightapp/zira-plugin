@@ -1,0 +1,6 @@
+interface:
+  display_name: "Schedule a Health Report"
+  short_description: "Recurring fleet health checks for selected sites"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $schedule-health-report to check my sites' devices every weekday morning."

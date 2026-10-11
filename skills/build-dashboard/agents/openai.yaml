@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build a Dashboard"
+  short_description: "Create a dashboard from site data sources"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $build-dashboard to build a Zira dashboard."

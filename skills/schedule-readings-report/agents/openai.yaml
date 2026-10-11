@@ -1,0 +1,6 @@
+interface:
+  display_name: "Schedule a Readings Report"
+  short_description: "Recurring reports over data sources, guided by device type"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $schedule-readings-report to send me a weekly report on my data sources."

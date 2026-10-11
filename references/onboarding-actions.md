@@ -1,0 +1,19 @@
+# Recommend an outcome from the user's priorities
+
+These are examples of needs, not user categories or an exhaustive menu. Use the user's own wording; multiple or changing priorities are normal. Recommend from their current goal, available evidence, access and prerequisites. Explain the expected result, then invoke the existing skill rather than reproducing its workflow.
+
+| Stated need | Useful first result | Prerequisites and possible next step |
+| --- | --- | --- |
+| Understand production or quality | `show-dashboards`: summarize a relevant existing dashboard; `readings-report`: answer a bounded question for a source and period | Dashboard discovery is not measurement data. Inspect actual widget evidence. Readings require the supported API and data; clarify the period when needed. Later offer a deeper comparison or a scheduled report. |
+| Keep cameras working | `device-status`: show which cameras need attention, including battery, connectivity and camera flags | Applies to every vision camera, without production/count configuration. Forms and custom sources have no camera status. Preserve last-known freshness and unknowns. |
+| Check counts, trim targets or production-device health | `health-report` in report-only mode | Discover supported `trimsaw`, `bandsaw` or `pallet-qa` profiles; missing targets do not block other checks. Do not offer it as an all-camera status check. |
+| Follow up on issues or see assigned work | `show-tasks`: retrieve open tasks | May omit company/site to show the user's authorized tasks. No forced inventory questionnaire. Create or assign tasks only when requested. |
+| Set up equipment or understand an installation | `show-data-sources` or `setup-vision`: inspect inventory or identify the next setup step for a selected device | Check current setup evidence and ask about unreadable steps. A heartbeat does not prove pairing or mounting. Marking setup steps follows that skill's write flow. |
+| Improve models or inspect defects | `open-dataset`: open the relevant dataset/model page; `evaluate-model`: score a selected model when inputs and runtime are ready | Open the relevant Zira page before slow local work. Device-output agreement is not accuracy. `find-defects` needs a suitable model and human review; do not promise automatic defect decisions. |
+| Learn how to use Zira or integrate it | `zira-help`: answer the specific product/API question with documentation | No account or site is required for public help. For supplied local nail images, offer `inspect-nail-images` and its bundled runtime. Offer private Android development only when that capability is present in the loaded build and the user explicitly requests it. |
+
+For camera/count recommendations, use `browse.mjs devices --company-id ID --site-id ID --health-profiles --profile prod` only when coverage needs checking. The read cap can return unknown profiles: unknown does not mean absent. For production questions, discover relevant dashboards or sources instead of running an unrelated fleet scan. Avoid scanning every site for a broad introduction; select a useful starting site or use an action that already supports the chosen multi-site scope.
+
+If unsure or the user skips personalization, offer open tasks, site discovery or help as light starting points. Do not save that choice as a priority. When no relevant data is available, explain the gap and offer setup guidance or a useful walkthrough; never fabricate a sample as their live result.
+
+Offer up to three actions, with the strongest fit first. Priorities rank suggestions, not access to skills. Creation, sharing and recurring jobs remain separate explicit actions; do not start them merely to finish onboarding. After the result, give one repeatable prompt and at most one related next step, respecting a prior decline.

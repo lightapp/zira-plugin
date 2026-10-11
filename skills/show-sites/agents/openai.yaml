@@ -1,0 +1,6 @@
+interface:
+  display_name: "Show Sites"
+  short_description: "Find authorized sites within a selected company"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $show-sites to show my Zira sites."

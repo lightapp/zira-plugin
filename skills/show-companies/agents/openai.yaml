@@ -1,0 +1,6 @@
+interface:
+  display_name: "Show Companies"
+  short_description: "Browse the companies your Zira account can access"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $show-companies to show the companies I can access in Zira."

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "version": "0.3.46-preview.1",
+  "channel": "preview",
+  "audience": "public",
+  "sourceCommit": "c41fba8649875d1d2bec5b56a685123f8aab3c90",
+  "sourceDirty": false,
+  "skills": [
+    "build-dashboard",
+    "create-data-source",
+    "create-form",
+    "create-task",
+    "device-status",
+    "duplicate-dashboard",
+    "duplicate-data-source",
+    "evaluate-model",
+    "find-defects",
+    "getting-started",
+    "health-report",
+    "inspect-nail-images",
+    "open-dataset",
+    "readings-report",
+    "schedule-ai-report",
+    "schedule-health-report",
+    "schedule-readings-report",
+    "setup-vision",
+    "show-companies",
+    "show-dashboards",
+    "show-data-sources",
+    "show-sites",
+    "show-tasks",
+    "subset-dataset",
+    "zira-help"
+  ],
+  "restrictions": {
+    "profiles": [
+      "prod"
+    ],
+    "ptModels": false,
+    "automaticRefresh": false
+  },
+  "releaseApproved": false
+}

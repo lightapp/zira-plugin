@@ -1,0 +1,6 @@
+interface:
+  display_name: "Find Rare Defects"
+  short_description: "Find and review rare defect examples like raised nails"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $find-defects to find more raised nails in Cam 1 Quality's recent QA sessions."

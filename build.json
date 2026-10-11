@@ -1,12 +1,13 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.47-preview.1",
+  "version": "0.3.48-preview.1",
   "channel": "preview",
   "audience": "public",
-  "sourceCommit": "829d08663cb06289d92c3423814e7e88389ec853",
+  "sourceCommit": "0c59193d94d6b837104fa617b839aaea841aa42d",
   "sourceDirty": false,
   "skills": [
     "build-dashboard",
+    "calibrate-trimsaw-stops",
     "create-data-source",
     "create-form",
     "create-task",

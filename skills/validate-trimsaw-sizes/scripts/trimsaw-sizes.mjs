@@ -484,7 +484,7 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
         option: { xAxis: { type: "category", name: u }, yAxis: { name: "Boards" }, series: bars(uncutCols.map(c => c.name), "Pre-cut (0.5 bins)") } } },
     { title: "Trim per stop: how much each cut took off", text: "Pre-cut minus the stop, for cut boards at a stop.",
       chart: { query: { groupBy: D.trimBin, pivot: false, filters: [{ metric: D.trimBin, op: "not-empty" }], measures: cutCols.map(c => sumOf(c.id, c.name)) },
-        option: { xAxis: { type: "value", name: `${u} trimmed`, min: 0 }, yAxis: { name: "Boards" }, series: bars(cutCols.map(c => c.name), "Trim (0.5 bins)").map(b => ({ ...b, barWidth: 7 })) } } },
+        option: { xAxis: { type: "value", name: `${u} trimmed`, min: 0, interval: 1, axisLabel: { hideOverlap: true } }, yAxis: { name: "Boards" }, series: bars(cutCols.map(c => c.name), "Trim (0.5 bins)").map(b => ({ ...b, barWidth: 7 })) } } },
     ...(longStop && longStop.longTrimPct >= 10 ? [{ title: `What was cut to ${longStop.stop}, by trim, every 15 minutes`,
       text: "A long-trim share that runs all window is routine practice; one block of it is a batch.",
       chart: { query: { interval: "15-minutes", groupBy: D.trimBand, filters: [{ metric: D.stop, op: "=", value: longStop.stop }, { metric: D.trimBand, op: "not-empty" }], measures: [sumOf(M.units, "Boards")] },

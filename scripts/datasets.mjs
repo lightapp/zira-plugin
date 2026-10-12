@@ -62,7 +62,7 @@ export function parseZiraUrl(value) {
   const origin = url.origin;
   const profile = WEB_HOSTS[url.host] && url.protocol === "https:" ? WEB_HOSTS[url.host] : null;
   if (!profile && !LOOPBACK.test(origin)) throw new Error("--url must be a my.zira.us, zira-webinteg.zira.us or local zira-web link");
-  const fromPath = url.pathname.match(/^\/data-sources\/([1-9]\d*)\/?$/)?.[1];
+  const fromPath = url.pathname.match(/^\/(?:data-sources|live)\/([1-9]\d*)\/?$/)?.[1];
   const deviceId = fromPath ?? url.searchParams.get("dataSourceId") ?? "";
   if (!id(deviceId)) throw new Error("The link does not name a data source");
   // The dataset page double-encodes the name (see zira-web DatasetsHubTab buildDatasetHref).
@@ -283,7 +283,7 @@ const liveSites = rows => rows.filter(s => !s.isDeleted && id(String(s?.id ?? ""
 
 // One step from "Example Plant's Cam 1 Quality" to the data source: Zira's own site search, then its
 // company search, then Vision data sources of the matching sites only.
-export async function findSource({ call, profile = "prod", origin, place, source, datasetFilter }) {
+export async function findSource({ call, profile = "prod", origin, place, source, datasetFilter, withDatasets = true }) {
   if (!normalizeName(place)) throw new Error("--place is required: a company or site name");
   let candidates = matches(liveSites(await listAll(call, "/sites/list", { textSearch: place }, 2)), place);
   if (!candidates.length) {
@@ -316,7 +316,7 @@ export async function findSource({ call, profile = "prod", origin, place, source
   if (items.length === 1) await rememberSource({ ...items[0], site: items[0].site }, process.env, profile);
   if (items.length === 1)
     return { ...result, chosen: items[0].id,
-      datasets: await listDatasets({ call, profile, origin, deviceId: items[0].id, name: datasetFilter }) };
+      ...(withDatasets ? { datasets: await listDatasets({ call, profile, origin, deviceId: items[0].id, name: datasetFilter }) } : {}) };
   return { ...result, question: sourceQuestion(result.items),
     ...(items.length ? {} : { next: source && found.length ? `No Vision data source matches "${source}"; offer the site's sources.` : "These sites have no Vision data source." }),
     ...(source && !items.length ? { available: found.map(f => ({ id: f.id, name: f.name, site: f.site.name })) } : {}) };

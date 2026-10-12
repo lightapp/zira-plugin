@@ -1,6 +1,7 @@
 // Claude Code mod (terminal and desktop Code tab; Codex has no equivalent): a Device Status band
 // above the prompt, a /zira:device-status-panel pane, a status line entry and a toast when a data source
-// changes state. Data comes from scripts/fleet.mjs (read-only, the health report's own
+// changes state. A Live pane (/zira:live-panel, or the live_panel tool Claude calls) streams one
+// camera's live counts from scripts/remote.mjs watch while it is open, for at most an hour. Data comes from scripts/fleet.mjs (read-only, the health report's own
 // online/offline rules) for the account's saved default company and site (plugin settings
 // only as a fallback), on request or every
 // 10 minutes when the user enables automatic refresh in plugin settings. The
@@ -9,13 +10,18 @@ import { automaticRefreshAllowed } from './distribution.mjs'
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Fleet } from '../types'
+import type { Fleet, LiveTarget, LiveView } from '../types'
 import { REFRESH_MS, changes, clean, fleetArgs, paneCounts, paneNote, paneTable, parseFleet, startFleetRefresh, summary } from './fleet-view.mjs'
+import { endLive, failLive, liveArgs, liveHeadline, liveTable, liveTarget, reduceLive, sparkline, startLive, trendSvg } from './live-view.mjs'
 
 const PANE = 'zira-device-status'
 const fleet = atom({ plugin: 'zira', key: 'fleet' } as const, null as Fleet | null)
 const isRefreshing = atom({ plugin: 'zira', key: 'isRefreshing' } as const, false)
 const isBandHidden = atom({ plugin: 'zira', key: 'isBandHidden' } as const, false)
+const LIVE_PANE = 'zira-live'
+const live = atom({ plugin: 'zira', key: 'live' } as const, null as LiveView | null)
+// The running watcher; leaving its loop (or a module reload) ends the child process.
+let liveStream: { return?: () => unknown } | null = null
 
 
 // The saved defaults, set by register (a change in plugin settings reloads the module).
@@ -59,6 +65,39 @@ async function openPane($: EngineInterface) {
   await $.ui.open({ id: PANE, title: 'Device Status' })
 }
 
+function stopLive() {
+  const stream = liveStream
+  liveStream = null
+  void stream?.return?.()
+}
+
+async function watchLive($: EngineInterface, target: LiveTarget) {
+  stopLive()
+  await $.store.set('liveTarget', target)
+  await update($, live, () => startLive(target, Date.now()))
+  await $.ui.open({ id: LIVE_PANE, title: 'Zira Live' })
+  const stream = $.process.spawn({ argv: ['node', `${$.plugin.root}/scripts/remote.mjs`, 'watch', ...liveArgs(target)] })
+  liveStream = stream as unknown as { return?: () => unknown }
+  void (async () => {
+    let buffer = ''
+    try {
+      for await (const piece of stream) {
+        if (liveStream !== (stream as unknown)) break
+        if (piece.stream !== 'stdout') continue
+        buffer += piece.text
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) await update($, live, s => reduceLive(s, line))
+      }
+    } catch (error) {
+      await update($, live, s => failLive(s, `Couldn't run Node.js 20+: ${String((error as Error)?.message ?? error)}`))
+    } finally {
+      if (liveStream === (stream as unknown)) liveStream = null
+      await update($, live, s => endLive(s))
+    }
+  })().catch(() => {}) // The session or module may be gone by the time the child ends.
+}
+
 async function setBandHidden($: EngineInterface, isHidden: boolean) {
   await $.store.set('bandHidden', isHidden)
   await update($, isBandHidden, () => isHidden)
@@ -70,6 +109,17 @@ export const register: Register = (on, options) => {
   cacheKey = `device-status-v3:${JSON.stringify(args)}`
 
   on('session.start', async ($, e, next) => {
+    // Claude opens the Live pane through this tool when the user asks to watch a camera here.
+    await $.tool.register({
+      name: 'live_panel',
+      description: 'Open the Zira Live panel in Claude Code: streams one Vision or Pallet Vision camera\'s live counts and status beside the chat while it is open (read-only; nothing is sent to the camera except the live-data heartbeat). Use only when the user asks to watch a camera here. Resolve the data source ID first (zira:live-view skill).',
+      inputSchema: { type: 'object', properties: {
+        dataSourceId: { type: 'string', description: 'Zira data source ID of the Vision or Pallet Vision camera' },
+        identity: { type: 'string', description: 'Optional camera identity (us-west-2:…) when several paired cameras are online' },
+        minutes: { type: 'integer', minimum: 1, maximum: 60, description: 'How long to stream (default 10)' },
+        profile: { type: 'string', enum: ['prod', 'integ'] },
+      }, required: ['dataSourceId'] },
+    })
     const isHidden = (await $.store.get('bandHidden')) === true
     await update($, isBandHidden, () => isHidden)
     if (autoRefresh) $.ui.status(summary(null, 0).status)
@@ -88,6 +138,62 @@ export const register: Register = (on, options) => {
     await refresh($, true)
 
     return { text: 'Opened the Device Status pane.' }
+  })
+
+  on('tool.call', { tool: 'mcp__zira__live_panel' }, async ($, e) => {
+    let target: LiveTarget
+    try {
+      target = liveTarget(e as Record<string, unknown>) as LiveTarget
+    } catch (error) {
+      return { deny: (error as Error).message }
+    }
+    await watchLive($, target)
+    return { result: `Opened the Zira Live panel for data source ${target.deviceId} for ${target.minutes} min. It shows live counts and status; the user can stop it there.` }
+  })
+
+  on('command.run', { command: 'zira:live-panel' }, async ($, e) => {
+    const arg = String(e.args ?? '').trim()
+    const saved = (await $.store.get('liveTarget')) as LiveTarget | undefined
+    if (!arg && !saved) {
+      await update($, live, () => null)
+      await $.ui.open({ id: LIVE_PANE, title: 'Zira Live' })
+      return { text: 'Opened the Zira Live panel. Ask Claude to watch a camera, or run /zira:live-panel <data source ID>.' }
+    }
+    try {
+      const target = liveTarget(arg ? { dataSourceId: arg.split(/\s+/)[0], identity: arg.split(/\s+/)[1] } : saved)
+      await watchLive($, target as LiveTarget)
+      return { text: `Opened the Zira Live panel for data source ${target.deviceId}.` }
+    } catch (error) {
+      return { text: (error as Error).message }
+    }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: LIVE_PANE }, async ($, e) => {
+    const table = $.ui.resolve(e)
+    const { Box, Button, Markdown, Text, Link } = table
+    const state = await read($, live)
+    const now = Date.now()
+    const running = liveStream !== null
+    const svg = state && 'Svg' in table ? trendSvg(state.points) : null
+    const Svg = (table as { Svg?: typeof Text }).Svg
+    const trend = state && !svg ? sparkline(state.points, 'units', Math.max(10, (e.props.bodyColumns ?? 40) - 12)) : ''
+
+    return (
+      <Box flexDirection="column">
+        <Box justifyContent="space-between">
+          <Text bold wrap="truncate-end">{state?.dataSource ? clean(state.dataSource.name) : 'Zira Live'}</Text>
+          {state && (running
+            ? <Button key="stop" label="Stop" onPress={() => { stopLive() }} />
+            : <Button key="again" label="Watch again" onPress={() => watchLive($, state.target)} />)}
+        </Box>
+        {state?.dataSource && <Text dimColor wrap="truncate-end">{clean(state.dataSource.site)}{state.camera ? ` · camera ${clean(state.camera).slice(-12)}` : ''}</Text>}
+        <Text color={state?.state === 'error' ? 'red' : undefined}>{liveHeadline(state, now)}</Text>
+        {state?.latest && <Markdown key="values" text={liveTable(state)} />}
+        {svg && Svg ? <Svg source={svg} alt="Units over time since the panel opened" /> : null}
+        {trend ? <Text dimColor>Units per update {trend}</Text> : null}
+        {state?.liveUrl && <Link key="open" href={new URL(state.liveUrl).href} label="Open live video in Zira" />}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

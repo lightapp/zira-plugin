@@ -36,8 +36,26 @@ export type Fleet =
     }
   | { ok: false; needs: 'sign-in' | 'company' | 'site' | 'error'; message: string; choices?: string[] }
 
+// The Live panel's state, folded from scripts/remote.mjs watch --jsonl lines (mods/live-view.mjs).
+export type LiveTarget = { deviceId: string; identity: string | null; minutes: number; profile: 'prod' | 'integ' }
+export type LivePoint = { at: string; units: number | null; shiftCount: number | null }
+export type LiveView = {
+  target: LiveTarget
+  dataSource: { id: string; name: string; site: string } | null
+  camera: string | null
+  liveUrl: string | null
+  state: 'connecting' | 'waiting' | 'live' | 'ended' | 'error'
+  message: string | null
+  latest: { at: string | null; status: string | null; units: number | null; shiftCount: number | null; trigger: string | null;
+    values: Record<string, string | number | boolean | null> } | null
+  points: LivePoint[]
+  messages: number
+  startedAt: number
+  endsAt: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    zira: { fleet: Fleet | null; isRefreshing: boolean; isBandHidden: boolean }
+    zira: { fleet: Fleet | null; isRefreshing: boolean; isBandHidden: boolean; live: LiveView | null }
   }
 }

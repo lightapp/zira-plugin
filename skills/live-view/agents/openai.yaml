@@ -1,0 +1,6 @@
+interface:
+  display_name: "Live View"
+  short_description: "Watch a camera live and see what it counts now"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $live-view to open my Zira camera's live view."

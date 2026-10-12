@@ -19,7 +19,7 @@ import { readJson, writePrivate, withLock } from "./storage.mjs";
 import { prepareShare } from "./sharing.mjs";
 import { internalTaskClient, ZiraApiError } from "./task-api.mjs";
 import { taskDrafts, handleTasks, updateTask } from "./tasks.mjs";
-const HELP = `health-report 0.3.48-preview.1 — Zira health checks for Codex and Claude Code
+const HELP = `health-report 0.3.49-preview.2 — Zira health checks for Codex and Claude Code
 
 node scripts/health-report.mjs COMMAND [OPTIONS]
   auth status|login|logout ...                 Zira browser authentication

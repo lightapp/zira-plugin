@@ -43,7 +43,7 @@ const MIN = 60e3;
 export const D = {
   precut: "910001", precutBin: "910002", trim: "910003", trimBin: "910004", outcome: "910005",
   stop: "910006", uncutReason: "910007", trimBand: "910008", cutAny: "910010", uncutAny: "910011",
-  unmatchedCut: "910012", notAtStop: "910013",
+  unmatchedCut: "910012", notAtStop: "910013", binTarget: "910014",
 };
 const cutId = k => String(910100 + k);
 const uncutId = k => String(910120 + k);
@@ -217,11 +217,24 @@ export function stopList(rows, merges, { from, to }) {
   return [...units.entries()].sort((a, b) => b[1] - a[1]).map(([stop, boards]) => ({ stop, boards }));
 }
 
+/** For each half-unit pre-cut bin, the stop most of its boards sat against, cut or uncut. */
+export function binTargets(rows, { from, to, merges, schedule }) {
+  const by = new Map();
+  for (const r of rows) {
+    if (r.t < from || r.t >= to || r.avgPre === null) continue;
+    const bin = Math.round(r.avgPre * factorAt(schedule, r.t) * 2) / 2;
+    const stop = r.target > 0 ? label(mapLabel(r.target, merges)) : "Not at a stop";
+    if (!by.has(bin)) by.set(bin, new Map());
+    by.get(bin).set(stop, (by.get(bin).get(stop) ?? 0) + r.units);
+  }
+  return new Map([...by].map(([bin, stops]) => [bin, [...stops].sort((a, b) => b[1] - a[1])[0][0]]));
+}
+
 export const BANDS = ["Under 2", "2–6", "6–10", "10 or more"];
 const band = trim => (trim < 2 ? BANDS[0] : trim < 6 ? BANDS[1] : trim < 10 ? BANDS[2] : BANDS[3]);
 
 /** Adds the derived columns to one device's arrays, for rows inside [from, to). */
-export function deriveColumns(device, { from, to, merges, schedule, stops, unit = "in" }) {
+export function deriveColumns(device, { from, to, merges, schedule, stops, unit = "in", binTarget = new Map() }) {
   const n = device.t.length;
   const shown = stops.slice(0, MAX_STOPS).map(s => s.stop);
   const cols = Object.fromEntries([...Object.values(D), ...shown.flatMap((_, k) => [cutId(k), uncutId(k)])].map(id => [id, new Array(n).fill(null)]));
@@ -233,7 +246,10 @@ export function deriveColumns(device, { from, to, merges, schedule, stops, unit 
     const k = stop === null ? -1 : shown.indexOf(stop);
     const stopName = stop === null ? "Not at a stop" : label(stop);
     cols[D.stop][i] = stopName;
-    if (pre !== null) { cols[D.precut][i] = round(pre); cols[D.precutBin][i] = Math.round(pre * 2) / 2; }
+    if (pre !== null) {
+      cols[D.precut][i] = round(pre); cols[D.precutBin][i] = Math.round(pre * 2) / 2;
+      cols[D.binTarget][i] = binTarget.get(cols[D.precutBin][i]) ?? null;
+    }
     let outcome;
     if (r.noCut) {
       outcome = "Uncut";
@@ -264,7 +280,7 @@ export function deriveColumns(device, { from, to, merges, schedule, stops, unit 
     [D.outcome, "Outcome", null, "list"], [D.stop, "Stop", null, "list"], [D.uncutReason, "Uncut reason", null, "list"],
     [D.trimBand, "Trim band", null, "list"], [D.cutAny, "Cut to other stops", null, "numeric"],
     [D.uncutAny, "Uncut boards", null, "numeric"], [D.unmatchedCut, "Cut, not at a stop", null, "numeric"],
-    [D.notAtStop, "Uncut, not at a stop", null, "numeric"],
+    [D.notAtStop, "Uncut, not at a stop", null, "numeric"], [D.binTarget, "Target (most boards at this pre-cut)", null, "list"],
     ...shown.flatMap((s, j) => [[cutId(j), `Cut to ${label(s)}`, null, "numeric"], [uncutId(j), `Uncut at ${label(s)}`, null, "numeric"]]),
   ];
   return meta.map(([id, name, u, dataType]) => ({ id, name, unit: u, dataType, present: true }));
@@ -459,8 +475,9 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
       text: "Pre-cut in half-unit bins, coloured by outcome. Uncut peaks should sit at a stop size; cut boards a little above the stop they were cut to.",
       chart: { height: 420, query: { groupBy: D.precutBin, pivot: false, filters: [{ metric: D.precutBin, op: "not-empty" }], measures: outcomeCols.map(c => sumOf(c.id, c.name)), sort: { by: "Pre-cut (0.5 bins)", dir: "asc" } },
         option: { xAxis: { type: "category", name: u }, yAxis: { name: "Boards" }, series: bars(outcomeCols.map(c => c.name), "Pre-cut (0.5 bins)") } } },
-    { title: "Pre-cut peaks", text: "The ten most common incoming lengths and what happened to them.",
-      table: { query: { groupBy: D.precutBin, pivot: false, filters: [{ metric: D.precutBin, op: "not-empty" }], measures: [sumOf(M.units, "Boards"), ...outcomeCols.map(c => sumOf(c.id, c.name))], sort: { by: "Boards", dir: "desc" }, limit: 10 } } },
+    { title: "Pre-cut peaks", text: "The ten most common incoming lengths, the stop most of them sat against (Target, cut or uncut) and what happened to them.",
+      table: { query: { groupBy: D.precutBin, pivot: false, filters: [{ metric: D.precutBin, op: "not-empty" }],
+        measures: [sumOf(M.units, "Boards"), { metric: D.binTarget, op: "first", label: "Target" }, ...outcomeCols.map(c => sumOf(c.id, c.name))], sort: { by: "Boards", dir: "desc" }, limit: 10 } } },
     { title: "Uncut boards: length by the stop they sat at",
       text: "Uncut boards should be at, or just under, their stop. Lengths above the stop are thin trims recorded as uncut.",
       chart: { query: { groupBy: D.precutBin, pivot: false, filters: [{ metric: D.outcome, op: "=", value: "Uncut" }], measures: uncutCols.map(c => sumOf(c.id, c.name)), sort: { by: "Pre-cut (0.5 bins)", dir: "asc" } },
@@ -579,7 +596,7 @@ export async function report({ datasetId, profile, from: f, to: t, merge = "auto
   const schedule = parseFactor(factorText, from);
   const stops = stopList(rows, merges, { from, to });
   const unit = displayUnit(stops, source);
-  const opts = { from, to, merges, schedule, stops, unit };
+  const opts = { from, to, merges, schedule, stops, unit, binTarget: binTargets(rows, { from, to, merges, schedule }) };
 
   // Copy every week of the source with the derived columns into the trimsaw root.
   const key = createHash("sha256").update(JSON.stringify([manifest.id, manifest.fetchedAt, window, merges, schedule])).digest("hex").slice(0, 10);

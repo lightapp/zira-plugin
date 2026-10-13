@@ -48,3 +48,26 @@ which changes which boards count as cut.
 - Half-unit neighbours (30 and 30.5) are only a pixel or two apart on a typical camera; expect
   some boards to land on the neighbouring line when both are configured.
 - Tape-measured boards remain the ground truth for both stop sizes and pre-cut.
+
+## Neighboring stop buckets
+
+For original labels 0.5 or 1 length unit apart, the report shows two bars per five-minute bucket,
+one for each stop, split into recorded cut and uncut boards. The accompanying table includes each
+stop's share of this pair's boards (not all production). Empty intervals are gaps in this pair's
+readings, not proof that the plant was idle. Counts are weighted by Units, not reading rows.
+
+The paired histogram uses raw Average Postcut on recorded cut boards, never nominal posted Postcut
+or corrected pre-cut. Both views use the report's From/To controls. Inspect a short shared window
+when asking whether the two sizes ran at the same time: a full-day overlap may combine separate runs.
+A separate sample-count table includes boards with missing raw postcut; those boards do not
+contribute to the histogram. A small sample does not establish a production pattern.
+
+Nearly identical measured lengths under two labels, with a few boards assigned to the neighboring
+bucket during a dominant run, suggest possible assignment spillover. They do not prove a wrong
+assignment, an active physical stop, or customer intent. Two distinct peaks support separate groups
+but still need an operator, production log or video to establish what was actually produced.
+Sequential label changes can produce similar patterns; these charts retain original labels even
+when the rest of the report merges a suspected relabel. No boards are automatically reassigned.
+
+At most eight pairs are displayed, ranked by their combined board counts in the authored window.
+The report and CLI disclose omitted pairs. Rebuild for another window to change the selected pairs.

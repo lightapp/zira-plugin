@@ -13,6 +13,7 @@ import { writePrivate } from "../../health-report/scripts/storage.mjs";
 import { formatLocal, parseLocal } from "../../readings-report/scripts/query-core.mjs";
 import { ROUTES, serveDetached, writeReport } from "../../readings-report/scripts/readings.mjs";
 import { LIMITS, fetchDataset, home, loadDataset, readDataset } from "../../readings-report/scripts/store.mjs";
+import { neighboringStops, deriveNeighborColumns, neighborSections } from "./neighbor-stops.mjs";
 
 const HELP = `Validate Trimsaw Sizes — stop buckets, uncut boards and pre-cut for one trimsaw data source
 node scripts/trimsaw-sizes.mjs windows --company-id ID --site-id ID --device-id ID --from ISO [--to ISO]
@@ -441,7 +442,7 @@ export function summaryText({ s, merges, scale, schedule, unit, window }) {
 const bars = (cols, x) => cols.map(c => ({ type: "bar", stack: "s", encode: { x, y: c } }));
 const sumOf = (id, name) => ({ metric: id, op: "sum", label: name });
 
-export function buildSpec({ title, window, stops, unit, s, merges, schedule, summary, names = { avgPost: "Average Postcut Length", postcut: "Postcut Length" } }) {
+export function buildSpec({ title, window, stops, unit, s, merges, schedule, summary, neighbors = { pairs: [], labels: [], omitted: 0 }, names = { avgPost: "Average Postcut Length", postcut: "Postcut Length" } }) {
   const shown = stops.slice(0, MAX_STOPS);
   const u = unit || "length";
   const cutCols = shown.map((x, k) => ({ id: cutId(k), name: `Cut to ${label(x.stop)}` }));
@@ -497,6 +498,8 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
         { metric: D.precut, op: "p10", label: "Pre-cut p10" }, { metric: D.precut, op: "median", label: "Pre-cut median" }, { metric: D.precut, op: "p90", label: "Pre-cut p90" },
         { metric: D.trim, op: "median", label: "Trim median" }, { metric: M.avgPost, op: "median", label: "Postcut median (raw)" }] } } },
   ];
+  sections.push(...neighborSections(neighbors, { target: M.target, units: M.units, avgPost: M.avgPost,
+    outcome: D.outcome, avgPostName: names.avgPost, unit }));
   return {
     title, summary, range: { from: window.from, to: window.to },
     kpis: [
@@ -577,7 +580,8 @@ export async function check({ datasetId, profile, from: f, to: t, merge = "auto"
     return { stop: label(stop), boards, cutBoards: wsum(cut), measuredMedian: round(wquantile(cut, 0.5)), p10: round(wquantile(cut, 0.1)), p90: round(wquantile(cut, 0.9)) };
   });
   return { kind: "trimsaw-check", dataset: datasetId, source: { id: source.id, name: source.name }, window,
-    boards: rows.reduce((s, r) => s + r.units, 0), relabels: merges, stops: peaks, scale };
+    boards: rows.reduce((s, r) => s + r.units, 0), relabels: merges, stops: peaks, scale,
+    neighbors: neighboringStops(rows, { from, to }) };
 }
 
 export async function report({ datasetId, profile, from: f, to: t, merge = "auto", factor = "none", title, serve = false,
@@ -596,20 +600,24 @@ export async function report({ datasetId, profile, from: f, to: t, merge = "auto
   const schedule = parseFactor(factorText, from);
   const stops = stopList(rows, merges, { from, to });
   const unit = displayUnit(stops, source);
+  const neighbors = neighboringStops(rows, { from, to });
   const opts = { from, to, merges, schedule, stops, unit, binTarget: binTargets(rows, { from, to, merges, schedule }) };
 
   // Copy every week of the source with the derived columns into the trimsaw root.
-  const key = createHash("sha256").update(JSON.stringify([manifest.id, manifest.fetchedAt, window, merges, schedule])).digest("hex").slice(0, 10);
+  const key = createHash("sha256").update(JSON.stringify(["neighbors-v1", manifest.id, manifest.fetchedAt, window, merges, schedule])).digest("hex").slice(0, 10);
   const derivedId = `ds-${key}`;
   let metrics = null;
   for (const c of manifest.chunks) {
     const chunk = JSON.parse(gunzipSync(await readFile(chunkPath(root, manifest.profile, c.deviceId, c.week))).toString("utf8"));
     metrics = deriveColumns({ t: chunk.t, cols: chunk.cols }, opts);
-    await writeGz(chunkPath(trimsawRoot, manifest.profile, c.deviceId, c.week), chunk);
+    metrics.push(...deriveNeighborColumns(chunk, boardRows(chunk), neighbors, { from, to }));
+    // Each calculation owns its chunks: another window/factor must not overwrite this report's data.
+    await writeGz(chunkPath(trimsawRoot, manifest.profile, c.deviceId, `${c.week}-${key}`), chunk);
   }
   const derived = {
     ...manifest, id: derivedId,
-    devices: [{ ...source, metrics: [...source.metrics.filter(m => !Object.values(D).includes(m.id) && !/^9101\d\d$/.test(m.id)), ...metrics] }],
+    chunks: manifest.chunks.map(c => ({ ...c, week: `${c.week}-${key}` })),
+    devices: [{ ...source, metrics: [...source.metrics.filter(m => !Object.values(D).includes(m.id) && !/^(9101|9120)\d\d$/.test(m.id)), ...metrics] }],
     notes: [...(manifest.notes ?? []), `Derived locally from dataset ${manifest.id}: ${schedule.some(x => x.factor !== 1) ? `pre-cut rescaled by ${schedule.map(x => x.factor).join(" then ")}; ` : ""}${merges.length ? `relabels merged (${merges.map(m => `${label(m.from)}→${label(m.to)}`).join(", ")}); ` : ""}window ${window.from.replace("T", " ")} to ${window.to.replace("T", " ")}.`],
     derivedFrom: manifest.id,
   };
@@ -620,10 +628,10 @@ export async function report({ datasetId, profile, from: f, to: t, merge = "auto
   const summary = summaryText({ s, merges, scale, schedule, unit, window });
   const metricName = (id, fallback) => source.metrics.find(m => m.id === id)?.name ?? fallback;
   const names = { avgPost: metricName(M.avgPost, "Average Postcut Length"), postcut: metricName(M.postcut, "Postcut Length") };
-  const spec = buildSpec({ title: title ?? `${source.name.trim()} — stop sizes and pre-cut`, window, stops, unit, s, merges, schedule, summary, names });
+  const spec = buildSpec({ title: title ?? `${source.name.trim()} — stop sizes and pre-cut`, window, stops, unit, s, merges, schedule, summary, names, neighbors });
   const written = await writeReport({ spec, manifest: derived, root: trimsawRoot, now });
   const out = { ...written, kind: "trimsaw-report", dataset: derivedId, sourceDataset: manifest.id, window, relabels: merges, scale,
-    factor: schedule, numbers: s, source: { id: source.id, name: source.name, url: source.url } };
+    factor: schedule, numbers: s, neighbors, source: { id: source.id, name: source.name, url: source.url } };
   if (serve) {
     const helper = await serveDetached({ report: written.path, profile: manifest.profile, idleMinutes, root: trimsawRoot,
       env: { ...env, ZIRA_READINGS_HOME: trimsawRoot } });

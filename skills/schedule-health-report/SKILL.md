@@ -3,6 +3,8 @@ name: schedule-health-report
 description: Set up a recurring Zira fleet health report for one or more sites in a few guided steps. It checks every trimsaw, bandsaw and Pallet QA device for reporting loss and alerts, writes a dashboard, and runs on this computer's scheduler, staying quiet when nothing changed. Use for "check my Example Manufacturing sites' devices every morning", "schedule a health report for Plant 2" or "daily device health for these plants", and to run, change or list those reports. Use health-report for a one-off check, task follow-up or custom count and trim rules, device-status for battery, temperature, camera and network status of every camera (now or scheduled), and schedule-readings-report for production numbers.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose") and [scheduling](../../references/scheduling.md). Run `node scripts/monitor.mjs …` from this skill's directory with the same `--profile`. It uses the health-report engine, reads Zira and writes only to this computer: the saved monitor, its comparison state and dashboards. It never creates tasks or changes devices.
 
 **Scheduled run.** When a scheduled task asks you to run a saved health report, run `monitor.mjs run --name NAME` and follow that task's prompt. Do not ask setup questions.

@@ -50,11 +50,25 @@ export function setup(options = {}) {
   if (!result.ready) throw new Error('Installed dependency versions do not match the pinned requirements.');
   return result;
 }
+export const analysisScripts = ['inspect_rings', 'inspect_grain', 'inspect_motion', 'prepare_motion',
+  'compare_alignment', 'compare_ring_rules', 'compare_smoothing', 'similarity_fit', 'wood_null_test', 'matching_negatives'];
+export function runAnalysis({ script, args = [], ...options } = {}, run = spawnSync) {
+  if (!analysisScripts.includes(script)) throw new Error('Choose a packaged analysis script by name (without .py).');
+  if (!Array.isArray(args) || args.length > 128 || args.some(v => typeof v !== 'string' || v.includes('\0'))) throw new Error('Analysis args must be an array of strings.');
+  const status = runtimeStatus(options);
+  if (!status.ready) throw new Error('The pinned OpenCV runtime is not ready. Use status/setup first.');
+  return run(status.python, [path.join(status.tool, script + '.py'), ...args], { stdio: 'inherit', shell: false });
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
-    const { values, positionals } = parseArgs({ allowPositionals: true, options: { runtime: { type: 'string' }, python: { type: 'string' }, 'tool-root': { type: 'string' } } });
+    if (['help', '--help'].includes(process.argv[2])) {
+      console.log('Use status or setup [--runtime DIRECTORY]. setup downloads pinned dependencies. Use run --script NAME --args JSON_ARRAY [--runtime DIRECTORY] to run packaged analysis. Scripts: ' + analysisScripts.join(', '));
+      process.exit(0);
+    }
+    const { values, positionals } = parseArgs({ allowPositionals: true, options: { runtime: { type: 'string' }, python: { type: 'string' }, 'tool-root': { type: 'string' }, script: { type: 'string' }, args: { type: 'string' } } });
     const options = { ...values, toolRoot: values['tool-root'] };
-    if (!['status', 'setup'].includes(positionals[0])) throw new Error('Use status or setup [--python PATH] [--runtime DIRECTORY]; --tool-root is for internal developers only.');
-    console.log(JSON.stringify(positionals[0] === 'setup' ? setup(options) : runtimeStatus(options), null, 2));
+    if (!['status', 'setup', 'run'].includes(positionals[0]) || positionals.length !== 1) throw new Error('Use status, setup or run; help lists options.');
+    if (positionals[0] === 'run') process.exitCode = runAnalysis({ ...options, args: JSON.parse(values.args || '[]') }).status ?? 2;
+    else console.log(JSON.stringify(positionals[0] === 'setup' ? setup(options) : runtimeStatus(options), null, 2));
   } catch (error) { console.error(error.message); process.exitCode = 2; }
 }

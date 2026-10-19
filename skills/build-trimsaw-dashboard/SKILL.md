@@ -3,6 +3,8 @@ name: build-trimsaw-dashboard
 description: Create a native Zira trimsaw validation dashboard after asking the user to select one or more data sources. Shows cut/uncut counts, original stop buckets, pre-cut and post-cut lengths, uncut reasons, weighted stop summaries, neighboring-stop comparisons, source readings and an AI summary. Use for "create a trimsaw validation dashboard" or "build this trimsaw dashboard for my saws". Use validate-trimsaw-sizes for the local diagnostic report and calibrate-trimsaw-stops for calibration instructions.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md), then use
 [Build a Dashboard](../build-dashboard/SKILL.md) for all dashboard creation, widget payloads,
 preview/apply receipts and verification. This skill owns the trimsaw selection and blueprint;

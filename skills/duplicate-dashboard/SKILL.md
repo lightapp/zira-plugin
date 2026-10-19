@@ -3,6 +3,8 @@ name: duplicate-dashboard
 description: Duplicate a next-generation Zira dashboard the way Zira web's Duplicate does, in the same site or to another site, where Claude reviews the target site's data sources and metrics and proposes the mapping for the user to confirm. Use for "copy the Band Saw 1 dashboard to South Charleston", "duplicate this dashboard" or "make the same dashboard for Plant 2". Use build-dashboard for a new dashboard and show-dashboards to find existing ones.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This follows Zira web's next-generation Duplicate dialog: dashboard → target site → data source and metric mapping → name → copy. The whole flow happens here; do not send the user to Zira's web assistant.
 
 1. **Source.** Reuse the company and site. Find the dashboard with `node ../../scripts/browse.mjs dashboards --company-id ID --site-id ID` and confirm the exact one. Classic dashboards are duplicated in Zira.

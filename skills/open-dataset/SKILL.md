@@ -3,6 +3,8 @@ name: open-dataset
 description: Open a Zira Vision or Pallet Vision dataset for annotation, or its versions, models, training or validation, in Zira with the context filled in. Finds the site and camera by name and lets the user choose the data source, dataset, version and model. Use for requests like "open Example Manufacturing's Cam 1 Quality dataset for annotation", "annotate the cam 2 dataset", "which dataset versions/models do we have", or "open the models"; to score a model on a dataset use evaluate-model; not for device setup, fleet health or offline image analysis.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This skill only reads and builds links. It never runs a model, changes labels or publishes edits.
 
 Run every command from this skill's directory as `node ../../scripts/<helper>.mjs …`, with the same `--profile` throughout (production; integration is available only in internal builds).

@@ -3,6 +3,8 @@ name: create-form
 description: Draft a Zira operator form (such as downtime, inspection or quality checks) with the user and open Zira's form editor for the selected site to review and save it.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). The Home Assistant also finishes forms in Zira's form editor, because saving a form creates its site metrics and field schema there. Plan the form in chat, then hand it to the editor.
 
 1. **Site and purpose.** Reuse the company and site, or discover and ask. Ask what the form records and who fills it in, unless already clear.

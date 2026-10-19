@@ -3,6 +3,8 @@ name: readings-report
 description: Load a Zira site's data-source readings for a time range onto this computer, answer questions about them, and build an interactive HTML report with charts and a written summary that the user can extend, save, rerun and schedule. Use for "show me Trimsaw 2's boards per hour last week", "compare reject rates across my saws this month", "build a report from Cam 1's readings" or "chart length versus target"; use show-dashboards for existing Zira dashboards, health-report for device health, and show-data-sources for inventory only.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose"), [the query and report reference](references/report-spec.md) and [handing over local pages](../../references/local-pages.md). Run `node scripts/readings.mjs …` from this skill's directory with the same `--profile`. It reads Zira and writes only to this computer: a readings cache and HTML reports. Nothing is written to Zira.
 
 **Show, then work.** As soon as the data sources are known, share their returned Zira links, then fetch.

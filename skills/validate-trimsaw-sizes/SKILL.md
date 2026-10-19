@@ -3,6 +3,8 @@ name: validate-trimsaw-sizes
 description: Check whether a Zira trimsaw camera's stop buckets, uncut boards and pre-cut lengths make sense over a chosen window, usually the production since the last calibration, and build an interactive report that explains the charts. Finds relabelled stop lines, explains a high uncut (No Cut) share, checks the camera's scale from uncut boards and shows incoming lengths against the cuts made. Scores how tightly cut boards sit on their sizes and compares two windows, such as old and new stops. Use for "validate Trimsaw 2's sizes after Friday's calibration", "why is uncut 31% on Trimsaw 2", "are the stop lines and pre-cut right", "did the new stops improve Trimsaw 1" or "explain the trimsaw size charts". Use calibrate-trimsaw-stops for the calibration values and on-camera steps, readings-report for general charts, health-report for device health and show-dashboards for existing Zira dashboards.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose"), [reading the report](references/reading-the-report.md) and [handing over local pages](../../references/local-pages.md). Run `node scripts/trimsaw-sizes.mjs …` from this skill's directory with the same `--profile`. It reads Zira through the readings-report cache and writes only to this computer: the cache, a derived copy of the dataset and the HTML report. Nothing is written to Zira or the camera.
 
 **Show, then work.** Share the data source's Zira link as soon as it is known, then fetch.

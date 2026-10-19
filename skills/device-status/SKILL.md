@@ -3,6 +3,8 @@ name: device-status
 description: Check the basic status of every Zira camera at chosen sites, now or on a schedule — online or offline, battery and charging, temperature, camera on or moved, Wi-Fi/cellular/LAN, power and device errors — with a dashboard, before any production counts or KPIs are set up. Use for "are my Plant East cameras OK?", "check battery and connection on all Example Manufacturing devices", "which cameras moved?" or "check device status every morning". Use health-report for count and trim checks or follow-up tasks, schedule-health-report for those checks on a schedule, and readings-report for production numbers.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose") and, for schedules, [scheduling](../../references/scheduling.md). Run `node scripts/device-status.mjs …` from this skill's directory with the same `--profile`. It runs the health-report engine in its status mode: it reads Zira and writes only to this computer (the dashboard, the last check's warnings and, for schedules, the saved monitor). It never creates tasks or changes devices.
 
 **Scheduled run.** When a scheduled task asks you to run a saved status check, run `device-status.mjs run --name NAME` and follow that task's prompt. Do not ask setup questions.

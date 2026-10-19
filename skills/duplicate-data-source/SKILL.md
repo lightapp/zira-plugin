@@ -3,6 +3,8 @@ name: duplicate-data-source
 description: Duplicate a Zira data source (Vision, Pallet QA, custom, form, sensor and other kinds) the way Zira web's Duplicate does, in the same site by default or in another site the user can change, and read the copy back. Use for "duplicate Saw 1", "copy Cam 1 Quality as Cam 2 Quality" or "copy this form to Plant 2". Use create-data-source for a new data source from a template, and show-data-sources to find existing ones.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This follows Zira web's data source Duplicate dialog: source → site → name → triggers → copy. The whole flow happens here; do not send the user to Zira's web assistant.
 
 1. **Source.** Reuse the company and site. List data sources with `node ../../scripts/browse.mjs devices --company-id ID --site-id ID` and confirm the exact one by name when several match.

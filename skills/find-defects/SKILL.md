@@ -3,6 +3,8 @@ name: find-defects
 description: Find rare defect examples such as raised nails among a Pallet Vision camera's nail slices, let a person review the candidates on a local page with the keyboard, and turn the accepted ones into a dataset or a corrected version of a training dataset. Works on recent QA sessions (new examples) or a dataset version (labels to fix). Use for "find more raised nails", "mine the validation sessions for raisedNail", or "which nails in sample-nails-v10.7 are really raised nails"; not for scoring a model (evaluate-model) or annotating in Zira (open-dataset).
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Check [build restrictions and prerequisites](../../references/distribution.md) first. Public builds support `.tflite` models only; do not offer `.pt` setup or execution even if another local environment has PyTorch installed.
 
 

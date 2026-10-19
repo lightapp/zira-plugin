@@ -3,6 +3,8 @@ name: live-view
 description: Open a Zira Vision or Pallet Vision camera live — its focused live page with video and live data in the host's browser, a summary of what it is counting right now in chat, its current activity (recording, sampling, model, trim saw) or a Claude Code Live panel beside the chat. Use for "show me Trimsaw 2 live", "open the live view of Cam 1 Quality", "what is the camera counting right now", "watch Saw 3 for two minutes" or "is the camera recording?". Read-only. Camera commands (record videos, sample images and others) use remote-control when installed, otherwise Zira's Remote Control tab; device health uses device-status.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose") and [guided actions](../../references/actions.md) for exit codes. Run `node ../../scripts/remote.mjs …` from this skill's directory with the same `--profile` (production; integration needs an internal build). This skill reads Zira and the camera's live topics. It sends nothing to the camera except the "someone is watching" heartbeat that makes it stream live data, exactly as the live page does.
 
 1. **Camera (data source).**

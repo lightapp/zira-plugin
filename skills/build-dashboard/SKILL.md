@@ -3,6 +3,8 @@ name: build-dashboard
 description: Build or update a Zira dashboard with native charts, KPIs, tables, filters and AI summary widgets grounded in real source metrics, then verify saved settings and results. Use for new dashboards or requested widget changes; use show-dashboards to find existing dashboards and duplicate-dashboard to copy one.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). Run helpers relative to this skill directory with the same `--profile`. Author the widgets here in Codex or Claude; the web AI builder is optional, not the required last step.
 
 Honor a requested transport. The commands below use the plugin's internal-API client, not MCP.

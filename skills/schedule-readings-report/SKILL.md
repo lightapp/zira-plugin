@@ -3,6 +3,8 @@ name: schedule-readings-report
 description: Set up a recurring report over one or more Zira data sources at a site in a few guided steps. Each source is recognized as Pallet QA, trimsaw, bandsaw or custom/form, and gets a matching template of key numbers and charts. Every run compares the last day, week or month with the one before, flags quiet sources and bad days, and runs on this computer's scheduler. Use for "send me Cam 1's quality report every morning", "weekly report for my saws" or "schedule a report on these data sources", and to run, change or list those reports. Use readings-report for a one-off analysis, schedule-health-report for device health, and schedule-ai-report for Zira's own emailed AI summaries.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose") and [scheduling](../../references/scheduling.md). Run `node scripts/scheduled-report.mjs …` from this skill's directory with the same `--profile`. It reads Zira and writes only to this computer: the readings cache, HTML reports and the saved job. Nothing is written to Zira.
 
 **Scheduled run.** When a scheduled task asks you to run a saved report, run `scheduled-report.mjs run --name NAME` and follow that task's prompt. Do not ask setup questions.

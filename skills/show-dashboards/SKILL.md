@@ -3,6 +3,8 @@ name: show-dashboards
 description: Find and link next-generation Zira dashboards, then summarize their production, quality or performance data. Use for dashboard discovery and site performance questions; building dashboards has a separate skill.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md). Resolve company and site, then run `node ../../scripts/browse.mjs dashboards --company-id ID --site-id ID` with the selected profile. Only next-generation (type 3) dashboards are supported.
 
 As soon as relevant dashboards are resolved, send their clickable names and company/site context in a brief progress message **before** widget inspection or data retrieval. Reuse verified links from the conversation immediately when applicable. This lets the user browse while analysis continues; do not wait until the final answer or ask permission to proceed with the requested summary. For broad performance questions, select the relevant performance/production/quality dashboards instead of dumping unrelated test dashboards. A list is not chart data.

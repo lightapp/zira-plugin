@@ -46,7 +46,7 @@ codex plugin marketplace add lightapp/zira-plugin --ref preview && codex plugin 
 claude plugin marketplace add lightapp/zira-plugin#preview && claude plugin install zira@zira
 ```
 
-No npm install is needed for the plugin's Node.js helpers. Model evaluation optionally
+The plugin starts a local `zira` MCP server using Node.js. Approve the host's MCP connection when prompted. It runs the packaged tools on this computer and uses the same Zira browser sign-in. No npm install is needed for the server or Node.js helpers. Model evaluation optionally
 installs its own Python dependencies when requested.
 
 Prefer to click? Register the source with the first command above, then open the
@@ -93,7 +93,7 @@ dataset navigation, model evaluation, dataset subsets and human-reviewed defect 
 Offline Inspect Nail Images bundles its OpenCV tool. Public model evaluation supports
 `.tflite` only. Claude Code includes the Device Status panel with manual refresh.
 Public builds use the production Zira environment.
-The exact installed skill inventory is in [`skills`](skills).
+The exact installed skill inventory is in [`skills`](skills). Skills invoke the declared local MCP server for packaged actions; [tool usage and job handling](references/local-mcp.md) describes the interface. The separate remote Zira MCP service is not required. The Claude panels and session-start hook retain their documented local execution paths.
 
 Installing does not grant Zira access, create tasks, activate schedules or change devices.
 Some actions depend on your account permissions and enabled server APIs; unavailable

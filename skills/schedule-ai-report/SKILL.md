@@ -3,6 +3,8 @@ name: schedule-ai-report
 description: Schedule a recurring Zira AI report that reads selected dashboard widgets and emails a written summary to chosen site members. Recurring device health reports use the separate health-report skill and host scheduler.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 For a recurring device-health check, follow [health-report](../health-report/SKILL.md) and its scheduling reference; retain the selected company/sites, timezone and task policy. Otherwise read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This follows the Home Assistant AI report flow; ask one step at a time and reuse anything already supplied.
 
 1. **Dashboards.** Run `node ../../scripts/ai-report.mjs dashboards --company-id ID --site-id ID --profile prod` and let the user pick up to five. None: offer build-dashboard first.

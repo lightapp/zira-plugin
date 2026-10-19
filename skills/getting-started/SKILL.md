@@ -3,6 +3,8 @@ name: getting-started
 description: Get value from Zira by choosing what matters to you, trying a relevant action and optionally remembering your priorities and default scope. Use for first-run onboarding, a tour, discovering useful skills, or showing, changing or forgetting Zira preferences.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [preferences](../../references/preferences.md). Run commands from this skill directory. Aim for one useful result within a few minutes, with at most two short questions about priorities before the action, plus necessary sign-in and scope choices. All personalization is optional. Never ask for, infer, label or save a job title, role or persona. Learn what the user wants to achieve in their own words.
 
 Before the tour, read [prerequisites and build identity](../../references/distribution.md). Run `node ../../scripts/build-info.mjs` to identify the loaded version and channel. Offer only skills present in this build. Preserve the priorities-based flow below.

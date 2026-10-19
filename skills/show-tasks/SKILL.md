@@ -3,6 +3,8 @@ name: show-tasks
 description: Retrieve and show Zira tasks directly in chat, including my open tasks across all authorized companies and sites, with filters, pagination and task details. Read-only; use create-task to add a task.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) for login and [guided actions](../../references/actions.md) for errors. Run commands from this skill directory. Use the task API and show its results in chat; do not send the user to the web assistant before attempting the read.
 
 1. **Sign in.** Check `node ../health-report/scripts/health-report.mjs auth status --profile prod`. If login is needed, run the same helper with `auth login` and let the user finish in the browser. Never read credential files or print tokens.

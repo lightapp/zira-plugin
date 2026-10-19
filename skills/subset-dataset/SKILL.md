@@ -3,6 +3,8 @@ name: subset-dataset
 description: Create a smaller Zira dataset from a dataset version with at least N images of each chosen class (an image with several classes counts for each), keeping train/val/test populated, and add it to Zira as a new dataset. Use for "make a subset with 100 raisedNail images", "balance this dataset by class", or "a smaller dataset with at least 50 of each class"; not for evaluating a model (evaluate-model) or opening a dataset (open-dataset).
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Check [build restrictions and prerequisites](../../references/distribution.md) first. Public builds support `.tflite` models only; do not offer `.pt` setup or execution even if another local environment has PyTorch installed.
 
 

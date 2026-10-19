@@ -3,6 +3,8 @@ name: create-data-source
 description: Create a Zira Vision or Pallet QA data source from its template at a selected site, or open the custom data-source builder. Use for creation; use Zira Help for instructions alone, Show Data Sources for existing inventory and duplicate-data-source to copy an existing data source.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This follows the Home Assistant data-source flow: site → type → template → name → create.
 
 1. **Site and type.** Reuse the company and site. Ask which kind to create unless supplied: **Vision**, **Pallet QA** or **Custom**. Other kinds (PLC, sensors, aggregators and similar) are created from the site's data sources page in Zira; use Zira Help for guidance.

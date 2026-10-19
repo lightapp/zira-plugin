@@ -3,6 +3,8 @@ name: evaluate-model
 description: Evaluate a Zira vision model — see how accurately it detects each class (precision, recall, the images it gets wrong, drawn on the images) by running it on a dataset on this computer. Works from a Zira camera's models and dataset versions, from a Pallet Vision camera's recent QA sessions (frames the model never trained on, sliced like Zira's training datasets), or from files on this computer (supported model files and dataset ZIPs). Use for "evaluate model", "test my model", "how accurate is my model", "evaluate the newest model on raised-nailes-new for Cam 1 Quality", "test the nails model on the latest validation session", or "check this .tflite on that dataset"; not for opening a dataset to annotate (open-dataset) or device health.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Check [build restrictions and prerequisites](../../references/distribution.md) first. Public builds support `.tflite` models only; do not offer `.pt` setup or execution even if another local environment has PyTorch installed.
 
 

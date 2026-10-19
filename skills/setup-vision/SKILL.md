@@ -3,6 +3,8 @@ name: setup-vision
 description: Guide setup of a Zira Vision or Pallet Vision device step by step, from pairing and mounting through recording, datasets, training and validation, with links to the right Zira tabs. Use for setup, not a fleet health check or Android development.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This follows the Home Assistant vision workflow.
 
 1. **Choose the device.** Reuse the company, site and data source. Otherwise run `node ../../scripts/vision.mjs list --company-id ID --site-id ID --profile prod`. One result: use it. Several: ask which. None: offer create-data-source (Vision or Pallet QA template).

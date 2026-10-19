@@ -3,6 +3,8 @@ name: create-task
 description: Create a general Zira task at a selected site, with a reviewed title, description, assignee and optional data source, and return its link. For a follow-up to an existing health-report finding, use health-report's task flow instead.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 If this follows an existing health-report finding, use [health-report](../health-report/SKILL.md) and its task-handling reference, preserving that report, scope and write authorization. Otherwise read [authorized browsing](../../references/browsing.md) and [guided actions](../../references/actions.md). This follows the Home Assistant task creation flow.
 
 1. **Site.** Reuse the company and site, or discover and ask. A task always belongs to one site.

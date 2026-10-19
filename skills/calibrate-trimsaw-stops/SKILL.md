@@ -3,6 +3,8 @@ name: calibrate-trimsaw-stops
 description: Plan Zira trimsaw stop calibration from readings anchored on a trusted stop. Use for calibration values, technician steps, stop-position drift or proactive calibration review. Historical plans are read-only; internal builds additionally offer guarded live previews and explicitly approved edits. Use validate-trimsaw-sizes to check sizes without calibration steps.
 ---
 
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
 Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose") and [how the values are worked out](references/how-it-works.md). Run `node scripts/calibration.mjs …` from this skill's directory with the same `--profile`. It reads the readings-report cache and writes nothing. The person who validates sizes is often not the one who calibrates, so give results a technician can follow at the camera.
 
 1. **Data source and window.** Resolve company, site and one trimsaw source as in validate-trimsaw-sizes, and share its Zira link. Fetch and list candidate windows with `node ../validate-trimsaw-sizes/scripts/trimsaw-sizes.mjs windows --company-id ID --site-id ID --device-id ID --from ISO [--to ISO]`. Propose its `suggested` window in plain words and ask the user to confirm it. The window must come after the last calibration change and the stop lines must not have moved since, or the values do not apply.

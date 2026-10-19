@@ -1,0 +1,5 @@
+# Zira model evaluation runtime for .tflite models (installed by `node evaluate.mjs setup`).
+numpy==2.3.5
+Pillow==12.3.0
+PyYAML==6.0.3
+ai-edge-litert==2.2.0

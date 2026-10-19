@@ -1,0 +1,6 @@
+interface:
+  display_name: "Readings Report"
+  short_description: "Load site readings locally and build interactive reports"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $readings-report to chart my data sources' readings for last week."

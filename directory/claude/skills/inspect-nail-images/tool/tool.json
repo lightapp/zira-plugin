@@ -1,0 +1,51 @@
+{
+  "id": "opencv-ring-inspector",
+  "name": "OpenCV ring inspector",
+  "description": "Offline OpenCV nail review: ring ablation, sector grain measurements with evidence marking, A/center/B motion, guarded registration, held-out wood null tests and frozen smoothing comparisons with known-motion and wrong-correspondence controls.",
+  "runtime": "Python >=3.10; OpenCV; NumPy",
+  "entrypoint": "inspect_rings.py",
+  "tags": [
+    "opencv",
+    "image",
+    "nail",
+    "seating",
+    "ring",
+    "wood",
+    "inspection",
+    "offline",
+    "alignment",
+    "motion",
+    "parallax",
+    "registration",
+    "ecc",
+    "benchmark",
+    "null-test",
+    "translation",
+    "similarity",
+    "affine",
+    "smoothing",
+    "blur",
+    "fallback",
+    "negative-controls",
+    "halo",
+    "trough",
+    "ablation",
+    "grain",
+    "annotation"
+  ],
+  "setup": [
+    "Create a Python virtual environment and install this tool's requirements.txt."
+  ],
+  "checks": [
+    [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-v"
+    ]
+  ],
+  "side_effects": "Reads explicitly supplied local images and manifest, creates a new local HTML/JS/JSON/PNG report directory. Optional review marks write browser local storage and user-exported JSON. No source modifications, training, network calls, uploads, production decisions, or device settings changes. Reports contain customer images and identifiers; keep them private."
+}

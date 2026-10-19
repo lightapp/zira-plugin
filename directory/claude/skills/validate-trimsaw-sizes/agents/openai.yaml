@@ -1,0 +1,6 @@
+interface:
+  display_name: "Validate Trimsaw Sizes"
+  short_description: "Check trimsaw stop buckets, uncut boards and pre-cut"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $validate-trimsaw-sizes to check my trimsaw's stop sizes and pre-cut since the last calibration."

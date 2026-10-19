@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "version": "0.3.51-preview.9",
+  "channel": "preview",
+  "audience": "public",
+  "sourceCommit": "5f45fd18285b633a2575bf9d6f37ec61972b9115",
+  "sourceDirty": false,
+  "skills": [
+    "build-dashboard",
+    "build-trimsaw-dashboard",
+    "calibrate-trimsaw-stops",
+    "create-data-source",
+    "create-form",
+    "create-task",
+    "device-status",
+    "duplicate-dashboard",
+    "duplicate-data-source",
+    "evaluate-model",
+    "find-defects",
+    "getting-started",
+    "health-report",
+    "inspect-nail-images",
+    "live-view",
+    "open-dataset",
+    "readings-report",
+    "schedule-ai-report",
+    "schedule-health-report",
+    "schedule-readings-report",
+    "setup-vision",
+    "show-companies",
+    "show-dashboards",
+    "show-data-sources",
+    "show-sites",
+    "show-tasks",
+    "subset-dataset",
+    "validate-trimsaw-sizes",
+    "zira-help"
+  ],
+  "restrictions": {
+    "profiles": [
+      "prod"
+    ],
+    "ptModels": false,
+    "automaticRefresh": false
+  },
+  "releaseApproved": false,
+  "target": "claude-directory"
+}

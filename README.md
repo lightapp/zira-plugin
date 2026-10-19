@@ -93,6 +93,7 @@ dataset navigation, model evaluation, dataset subsets and human-reviewed defect 
 Offline Inspect Nail Images bundles its OpenCV tool. Public model evaluation supports
 `.tflite` only. Claude Code includes the Device Status panel with manual refresh.
 Public builds use the production Zira environment.
+The separately generated Claude directory candidate is in `directory/claude`. It keeps all public skills and local MCP tools, but omits the startup hook and optional panels. Root Git installations keep those features. Neither package is a directory approval.
 The exact installed skill inventory is in [`skills`](skills). Skills invoke the declared local MCP server for packaged actions; [tool usage and job handling](references/local-mcp.md) describes the interface. The separate remote Zira MCP service is not required. The Claude panels and session-start hook retain their documented local execution paths.
 
 Installing does not grant Zira access, create tasks, activate schedules or change devices.

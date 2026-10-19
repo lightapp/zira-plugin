@@ -1,7 +1,7 @@
 {
   "name": "zira",
   "displayName": "Zira",
-  "version": "0.3.51-preview.8",
+  "version": "0.3.51-preview.9",
   "description": "Run Zira from your AI chat: ask about production data, check device health, build and schedule readings reports, manage tasks and set up vision devices.",
   "author": {
     "name": "Zira",

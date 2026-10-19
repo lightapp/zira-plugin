@@ -1,0 +1,37 @@
+{
+  "name": "zira",
+  "version": "0.3.51-preview.9",
+  "description": "Run Zira from your AI chat: ask about production data, check device health, build and schedule readings reports, manage tasks and set up vision devices.",
+  "author": {
+    "name": "Zira",
+    "url": "https://zira.us"
+  },
+  "skills": "./skills/",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/getting-started/SKILL.md"
+    }
+  },
+  "interface": {
+    "displayName": "Zira",
+    "shortDescription": "Run Zira from your chat",
+    "longDescription": "Ask about your plant in plain words and Zira answers from your live data. Show how a machine performed last week, turn readings into an interactive report you can save, schedule and share, check the health of your device fleet, see and create tasks, start dashboards, draft forms, create data sources, schedule AI summaries, and set up Vision devices step by step with their datasets and models. Type /zira to see every action, or just ask. Zira signs in with your own account, sees only what you can see, and shows a preview before it creates or changes anything. Inspect supplied nail images locally with the bundled OpenCV tool. Requires a local client and Node.js 20+; image/model analysis also requires its dedicated Python environment. Early access.",
+    "developerName": "Zira",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Help me get started with Zira.",
+      "Show my open Zira tasks.",
+      "Show my Zira sites."
+    ],
+    "websiteURL": "https://zira.us",
+    "logo": "./assets/zira-icon.svg",
+    "logoDark": "./assets/zira-icon-dark.svg",
+    "composerIcon": "./assets/zira-icon.svg",
+    "supportURL": "https://help.zira.us/docs",
+    "privacyPolicyURL": "https://zira.us/privacy",
+    "termsOfServiceURL": "https://zira.us/terms.html"
+  },
+  "homepage": "https://zira.us",
+  "mcpServers": "./.mcp.json"
+}

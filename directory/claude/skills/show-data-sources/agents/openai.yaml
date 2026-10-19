@@ -1,0 +1,6 @@
+interface:
+  display_name: "Show Data Sources"
+  short_description: "Browse equipment and data sources at a selected site"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $show-data-sources to show data sources at my Zira site."

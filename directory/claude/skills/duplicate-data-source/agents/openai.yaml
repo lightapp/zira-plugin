@@ -1,0 +1,6 @@
+interface:
+  display_name: "Duplicate a Data Source"
+  short_description: "Copy a data source in its site or to another site"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $duplicate-data-source to duplicate a Zira data source."

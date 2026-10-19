@@ -1,0 +1,16 @@
+---
+name: calibrate-trimsaw-stops
+description: Plan Zira trimsaw stop calibration from readings anchored on a trusted stop. Use for calibration values, technician steps, stop-position drift or proactive calibration review. Historical plans are read-only; internal builds additionally offer guarded live previews and explicitly approved edits. Use validate-trimsaw-sizes to check sizes without calibration steps.
+---
+
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
+Read [authorized browsing](../../references/browsing.md) (including "Asking the user to choose") and [how the values are worked out](references/how-it-works.md). Run `node scripts/calibration.mjs …` from this skill's directory with the same `--profile`. It reads the readings-report cache and writes nothing. The person who validates sizes is often not the one who calibrates, so give results a technician can follow at the camera.
+
+1. **Data source and window.** Resolve company, site and one trimsaw source as in validate-trimsaw-sizes, and share its Zira link. Fetch and list candidate windows with `node ../validate-trimsaw-sizes/scripts/trimsaw-sizes.mjs windows --company-id ID --site-id ID --device-id ID --from ISO [--to ISO]`. Propose its `suggested` window in plain words and ask the user to confirm it. The window must come after the last calibration change and the stop lines must not have moved since, or the values do not apply.
+2. **Anchor.** Ask which stop the user trusts most, usually the most common size, whose physical stop is known to be right. Default: the busiest stop with uncut boards. Pass it as `--anchor SIZE`.
+3. **Plan.** Run `plan --dataset ID --from LOCAL --to LOCAL [--anchor SIZE] [--merge …]` (the dataset is the one `windows` printed). Show `scale.basis` and `readsShortBy` in one sentence, then a short table per line: stop, cut boards, measured now (`cutMeasured`), real size, **calibration value**, cross-check from its uncut boards and confidence. Mention each `notes` entry and every `warnings` entry. If `needed` is false, say no change is needed and stop.
+4. **Steps.** Give `steps` as a numbered list for the technician, unchanged in substance. Say that calibration values are entered on the camera (on site, or through the camera's remote screen) and that this skill did not change anything. Offer to recheck with validate-trimsaw-sizes after about an hour of production with the new values. On a camera measuring far ends from a blade line (Vision-App `3df52081` or later), a No Cut share that jumps after the change on stops that normally trim points to a false blade line, a pile of equally trimmed stock: suggest collecting again, or the blade-line switch, rather than new calibration values.
+
+Never present a calibration value for a stop with `confidence: none`; those lines use the camera's own calibration suggestion once the others are set. Lines added after the window are not in the readings; the steps cover them the same way. Exit codes: 0 done, 2 failed (the message explains).
+

@@ -1,0 +1,32 @@
+{
+  "name": "zira",
+  "displayName": "Zira",
+  "version": "0.3.51-preview.9",
+  "description": "Run Zira from your AI chat: ask about production data, check device health, build and schedule readings reports, manage tasks and set up vision devices.",
+  "author": {
+    "name": "Zira",
+    "url": "https://zira.us"
+  },
+  "homepage": "https://zira.us",
+  "icon": "./assets/zira-directory-icon.png",
+  "keywords": [
+    "zira",
+    "operations",
+    "device health",
+    "manufacturing",
+    "vision"
+  ],
+  "supportUrl": "https://help.zira.us/docs",
+  "privacyPolicyUrl": "https://zira.us/privacy",
+  "termsOfServiceUrl": "https://zira.us/terms.html",
+  "documentationUrl": "https://help.zira.us/docs",
+  "mcpServers": {
+    "zira": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs"
+      ]
+    }
+  }
+}

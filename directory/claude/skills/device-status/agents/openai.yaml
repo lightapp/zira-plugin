@@ -1,0 +1,6 @@
+interface:
+  display_name: "Device Status"
+  short_description: "Battery, heat, camera and network for every camera"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $device-status to check battery, temperature, camera and connection on my site's cameras."

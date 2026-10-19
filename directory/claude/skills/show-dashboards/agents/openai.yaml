@@ -1,0 +1,6 @@
+interface:
+  display_name: "Show Dashboards"
+  short_description: "Find dashboard links and summarize site performance"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $show-dashboards to find dashboards for my Zira site."

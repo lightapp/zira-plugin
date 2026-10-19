@@ -1,0 +1,6 @@
+interface:
+  display_name: "Show My Open Tasks"
+  short_description: "View and filter your Zira tasks with links"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $show-tasks to show my open Zira tasks."

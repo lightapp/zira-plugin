@@ -1,0 +1,6 @@
+interface:
+  display_name: "Health Report"
+  short_description: "Check device health and handle findings in chat"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $health-report to check my Zira sites."

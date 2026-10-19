@@ -1,0 +1,6 @@
+interface:
+  display_name: "Create a Data Source"
+  short_description: "Create Vision or Pallet QA sources, or open the builder"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $create-data-source to create a Zira data source."

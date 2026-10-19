@@ -1,0 +1,34 @@
+---
+name: getting-started
+description: Get value from Zira by choosing what matters to you, trying a relevant action and optionally remembering your priorities and default scope. Use for first-run onboarding, a tour, discovering useful skills, or showing, changing or forgetting Zira preferences.
+---
+
+Use the [local MCP tools](../../references/local-mcp.md) for the packaged commands below. The command examples describe arguments; invoke the corresponding MCP tool instead of running them in a shell.
+
+Read [authorized browsing](../../references/browsing.md) and [preferences](../../references/preferences.md). Run commands from this skill directory. Aim for one useful result within a few minutes, with at most two short questions about priorities before the action, plus necessary sign-in and scope choices. All personalization is optional. Never ask for, infer, label or save a job title, role or persona. Learn what the user wants to achieve in their own words.
+
+Before the tour, read [prerequisites and build identity](../../references/distribution.md). Run `node ../../scripts/build-info.mjs` to identify the loaded version and channel. Offer only skills present in this build. Preserve the priorities-based flow below.
+
+## Start from what matters
+
+If the user already asked for a concrete action, do it through its existing skill first; onboarding must not delay it. A request to show, change or forget preferences goes directly to the preferences reference, without repeating the tour.
+
+1. **Welcome.** Briefly introduce Zira using [About Zira](../../references/about-zira.md). Reuse needs already stated. For returning users, recall saved priorities before asking for them again.
+2. **Sign in and recall.** Check `node ../health-report/scripts/health-report.mjs auth status --profile prod` (preserve an explicitly selected integration environment). If needed, explain browser sign-in, run `auth login` and let the user finish. Never read credentials or print tokens. After sign-in, load saved preferences once as the reference describes. Use confirmed priorities already in context instead of asking again. If sign-in is unavailable, give a relevant `zira-help` walkthrough and keep choices in the conversation only.
+3. **Listen and choose today's outcome.** If priorities are not known, ask “What would you like Zira to help you with?” Offer a few outcome examples when helpful: understand production, improve quality, keep cameras working, follow up on issues, set up equipment, or work with models. Accept multiple priorities, free text, “not sure” or skipping. These examples are not a fixed classification. Suggest likely priorities from the stated problem and let the user correct them. With several priorities, ask which would help most today; otherwise ask one useful follow-up only when needed, such as “Is there a particular issue you're investigating?” If they skip, offer a light first action (open tasks or site discovery) without inventing priorities. Do not add a separate experience-level questionnaire; explain unfamiliar terms when they arise.
+4. **Resolve only necessary scope.** Reuse supplied or saved company/site names, resolving them through authorized discovery. `show-tasks` can read the user's open tasks across authorized sites without a company/site picker; help may need no sign-in. For a site action, run `node ../../scripts/browse.mjs companies --profile prod`, then `sites --company-id ID --profile prod`. With one match say which you are using; with several use the host's choice UI, offering up to three relevant options and accepting another name. Allow “All sites” when the selected action supports it. Share discovered site links. An empty saved site means ask as needed, not automatic authorization for all sites.
+
+## Recommend, do, then teach
+
+Use [priority-to-action guidance](../../references/onboarding-actions.md) to match the user's words to useful actions and actual prerequisites. Discover only what the proposed action needs. Offer up to three concrete outcomes, best fit first, each with one sentence explaining what the user will get and why it fits. When the request already selects an action, proceed without another menu. Do not always put tasks first or show the full skill catalog.
+
+Follow the selected skill, passing the current priority, verified scope, environment and any already chosen period or policy. Reuse them instead of asking again. Onboarding itself makes no Zira writes or schedules; an explicitly requested follow-up uses its own skill and existing write requirements. For a health check during the tour, use report-only mode. If the action is blocked, explain the specific gap and offer a relevant available alternative. Partial or empty discovery is not proof that data or equipment is absent.
+
+After delivering the result:
+
+- Explain one useful finding and how to repeat this action in ordinary words, using the user's actual scope. A menu, sign-in success or a list of skill names alone is not completion of the selected action. A help request can finish with a useful, clearly identified walkthrough.
+- Offer one relevant next action, without repeating a suggestion the invoked skill already made. A declined schedule or follow-up stays declined. Do not create it merely because it matches a priority.
+- If new preferences emerged, offer once to remember a short editable summary, such as “Focus on camera reliability; use Plant North by default.” Save only what the user agreed to remember, following the preferences reference. Reuse explicit “remember/save” authorization; no extra confirmation is needed. A one-time period, selected action or discovered device is not automatically a lasting preference. If they decline, continue with session-only context and do not keep asking.
+- Mention that natural requests work, and they can say “show my Zira preferences”, “change my priorities”, “forget my Zira preferences” or “get started” later. When useful, mention `/zira:` in Claude Code or the skill picker in Codex.
+
+For returning users, reuse confirmed priorities and offer the next relevant action. Do not restart the questionnaire because the plugin updated. Keep suggestions tentative when needs change; the user's current request takes precedence over saved preferences and all skills remain available.

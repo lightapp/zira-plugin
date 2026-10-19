@@ -1,0 +1,6 @@
+interface:
+  display_name: "Get Started with Zira"
+  short_description: "Choose your priorities and try a useful Zira action"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $getting-started to help me get started with Zira."

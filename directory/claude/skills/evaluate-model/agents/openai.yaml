@@ -1,0 +1,6 @@
+interface:
+  display_name: "Evaluate a Model"
+  short_description: "See how a vision model scores on a dataset"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $evaluate-model to see how my newest Zira vision model performs on a dataset."

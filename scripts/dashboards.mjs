@@ -24,7 +24,7 @@ RANGE: ${"today yesterday this-week last-week last-7-days last-14-days last-21-d
 INTERVAL: last-reading 1-minute 5-minutes 15-minutes hourly daily weekly monthly
 
 create previews by default. --apply creates one dashboard with those data sources and
-reads it back. Widgets are drafted afterwards in the dashboard's AI builder link.
+reads it back. Use dashboard-widgets.mjs context/save to author native widgets in chat.
 copy-mapping reads (writes nothing in Zira) the source dashboard's data sources, the metrics its
 widgets use and the target site's data sources of the same kind, and proposes a mapping
 (--out saves it). copy previews a duplicate of a next-generation dashboard (default name
@@ -152,7 +152,7 @@ export async function createDashboard({
       message: "This exact dashboard was already created; nothing new was written." };
   return { kind: "dashboard", profile, applied: true, state: outcome.verified ? "created" : "unverified", verified: outcome.verified,
     dashboardId, ...links, preview, ...(outcome.readBack ? { readBack: outcome.readBack } : {}),
-    next: "Open builderUrl to draft widgets with the dashboard's AI builder, then review and save them there. The dashboard has no widgets yet." };
+    next: "Use dashboard-widgets.mjs context and save to preview, create and verify native widgets. The dashboard has no widgets yet; builderUrl remains an optional web editor." };
 }
 
 // ---- Duplicate a dashboard (CopyNextGenDashboardDialog.js → POST /dashboards/copy) ----

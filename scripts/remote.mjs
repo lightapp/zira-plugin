@@ -11,6 +11,8 @@ import {
 } from "./client.mjs";
 import { findSource, launchBrowser, parseZiraUrl, webOrigin, ROUTES as DATASET_ROUTES } from "./datasets.mjs";
 import { toolkit } from "../skills/health-report/scripts/api.mjs";
+import { buildInfo } from "./build-info.mjs";
+import { calibrationParams, calibrationSummary } from "./trimsaw-calibration.mjs";
 
 const HELP = `Zira live view, live data and remote control for Vision / Pallet Vision cameras
 node scripts/remote.mjs find --place TEXT [--source TEXT]
@@ -65,6 +67,8 @@ export const STATUS_TOPICS = {
   settings: { suffix: "settings-state", label: "Device settings", palletScope: "device" },
   settingsStatus: { suffix: "settings-status", label: "Settings command", palletScope: "device" },
   trimsaw: { suffix: "trimsaw-status", label: "Trim saw stops", types: ["vision"] },
+  trimsawCalibration: { suffix: "trimsaw-calibration-state", label: "Trim saw calibration", types: ["vision"] },
+  trimsawCalibrationMetrics: { suffix: "trimsaw-calibration-metrics", label: "Trim saw live comparison", types: ["vision"] },
   deployment: { suffix: "deployment-status", label: "App version", types: ["vision"] },
 };
 
@@ -110,6 +114,11 @@ export const ACTIONS = {
     effect: "Replaces the camera's recording schedule." },
   "recording.stop": { label: "Stop video recording", status: "recording", risk: "device", enabled: true, types: BOTH, params: {} },
   "settings.apply": { label: "Change device settings", status: "settingsStatus", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl" },
+  ...Object.fromEntries(["get", "preview", "apply", "cancel"].map(c =>
+    [`trimsaw.calibration.${c}`, { label: `Trim saw calibration: ${c}`, status: "trimsawCalibration", correlation: "requestId",
+      risk: c === "apply" ? "guarded" : "read", enabled: buildInfo().audience === "internal", internalOnly: true,
+      types: ["vision"], params: {},
+      note: "Requires new Android calibration protocol and explicit server action enablement; preview never changes production." }])),
   "model.sync": { label: "Push a model to the camera", status: "model", risk: "guarded", enabled: false, types: BOTH, skill: "update-vision-device" },
   "model.delete": { label: "Remove a model from the camera", status: "model", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl" },
   ...Object.fromEntries(["start", "stop", "continue", "assign", "remove", "apply", "cancel", "clear"].map(c =>
@@ -134,6 +143,9 @@ export function actionParams(name, given = {}, kind) {
     throw new Blocked("not_enabled", `${action.label} is not available from chat yet; use ${where}.`, { action: name });
   }
   if (given === null || typeof given !== "object" || Array.isArray(given)) fail("--params must be a JSON object");
+  if (name.startsWith("trimsaw.calibration.")) {
+    try { return calibrationParams(name.split(".").at(-1), given); } catch (error) { fail(error.message); }
+  }
   const extra = Object.keys(given).filter(k => !Object.hasOwn(action.params, k));
   if (extra.length) fail(`Unknown parameter(s) for ${name}: ${extra.join(", ")}`);
   const out = {};
@@ -163,7 +175,7 @@ export function actionParams(name, given = {}, kind) {
 }
 
 export function listActions({ all = false } = {}) {
-  return Object.entries(ACTIONS).filter(([, a]) => all || a.enabled).map(([name, a]) => ({
+  return Object.entries(ACTIONS).filter(([, a]) => (!a.internalOnly || buildInfo().audience === "internal") && (all || a.enabled)).map(([name, a]) => ({
     name, label: a.label, enabled: a.enabled, risk: a.risk, cameras: a.types.map(t => t === "pallet" ? "Pallet Vision" : "Vision"),
     ...(a.note ? { note: a.note } : {}),
     ...(a.effect ? { effect: a.effect } : {}),
@@ -236,6 +248,8 @@ export function statusSummary(kind, m) {
     ...(Array.isArray(m.schedules) ? { schedules: m.schedules.slice(0, 14).map(s => flat(s, 6)) } : {}),
     ...(m.activeClip ? { activeClip: flat(m.activeClip, 8) } : {}), ...(Number.isFinite(m.completedClips) ? { completedClips: m.completedClips } : {}) };
   if (kind === "trimsaw") return { at, ...pick(m, ["state", "requestId", "message"]), ...(m.meta ? { meta: flat(m.meta, 12) } : {}) };
+  if (kind === "trimsawCalibration" || kind === "trimsawCalibrationMetrics")
+    return { at, ...pick(m, ["state", "requestId", "message"]), calibration: calibrationSummary(m.calibration) };
   if (kind === "model") return { at, ...pick(m, ["state", "requestId", "message"]), ...(m.meta ? { meta: flat(m.meta, 8) } : {}) };
   return { at, ...pick(m, ["state", "requestId", "message", "sampleInterval", "maxSamples", "version", "versionName", "versionCode", "appVersion"]) };
 }
@@ -299,7 +313,7 @@ export async function connectIot({ call, profile, auth, fetchImpl = globalThis.f
   return { client, identityId: creds.identityId, clientAccess: config.clientAccess ?? null };
 }
 
-async function withIot(scope, ds, fn) {
+export async function withIot(scope, ds, fn) {
   let session;
   try {
     session = await (scope.connectIot ?? connectIot)(scope);
@@ -327,7 +341,7 @@ const sleep = (ms, signal) => new Promise(resolve => {
 
 // Collects messages on the given filters for up to ms, ending early when done() says so
 // or the signal aborts. subscribe: false when the caller already subscribed.
-async function collect(client, filters, ms, { done, onMessage, signal, subscribe = true } = {}) {
+export async function collect(client, filters, ms, { done, onMessage, signal, subscribe = true } = {}) {
   const seen = [];
   let finish, onClose;
   const ended = new Promise(r => { finish = r; });

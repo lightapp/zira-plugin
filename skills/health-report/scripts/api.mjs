@@ -119,7 +119,7 @@ async function devicesForSites(get, companyId, siteIds) {
   }
   return [...devices.values()];
 }
-function numericRows(raw, maxRows) {
+export function numericRows(raw, maxRows) {
   let b = raw && Object.hasOwn(raw, "data") ? raw.data : raw;
   if (typeof b === "string") {
     try {

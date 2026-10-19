@@ -401,14 +401,22 @@ export class MqttClient extends EventEmitter {
       this.ws.send(build(packetId));
     });
   }
-  // Rejects with not_authorized when the broker refuses any filter.
+  // AWS IoT permits at most eight filters per SUBSCRIBE, regardless of its connection limit.
+  // Stop on the first refused batch; never retry a refusal or report partial success.
   async subscribe(filters, { qos = 1 } = {}) {
-    const ack = await this.request(id => encodeSubscribe(id, filters, qos));
-    const refused = ack.reasonCodes.map((code, i) => [filters[i], code]).filter(([, code]) => code >= 0x80);
-    if (refused.length)
-      throw new IotError(refused.some(([, c]) => c === 0x87) ? "not_authorized" : "refused",
-        `AWS IoT refused the subscription to ${refused.map(([f, c]) => `${f} (${reasonText(c)})`).join(", ")}`);
-    return ack.reasonCodes;
+    const reasonCodes = [];
+    for (let offset = 0; offset < filters.length; offset += 8) {
+      const batch = filters.slice(offset, offset + 8);
+      const ack = await this.request(id => encodeSubscribe(id, batch, qos));
+      if (ack.type !== PACKET.SUBACK || ack.reasonCodes?.length !== batch.length)
+        throw new IotError("protocol", "AWS IoT returned an invalid subscription acknowledgement");
+      const refused = ack.reasonCodes.map((code, i) => [batch[i], code]).filter(([, code]) => code >= 0x80);
+      if (refused.length)
+        throw new IotError(refused.some(([, c]) => c === 0x87) ? "not_authorized" : "refused",
+          `AWS IoT refused the subscription to ${refused.map(([f, c]) => `${f} (${reasonText(c)})`).join(", ")}`);
+      reasonCodes.push(...ack.reasonCodes);
+    }
+    return reasonCodes;
   }
   async publish(topic, payload, { qos = 1, retain = false, messageExpiry, contentType = "application/json" } = {}) {
     const body = Buffer.isBuffer(payload) ? payload : Buffer.from(typeof payload === "string" ? payload : JSON.stringify(payload));

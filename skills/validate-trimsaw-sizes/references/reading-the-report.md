@@ -18,6 +18,7 @@ measurements. No Cut is set when the board did not reach the saw line the camera
 | Cut boards at a stop form a tight peak away from the stop's size | Calibration offset at that stop, not noise | Check the stop's calibration value on the camera |
 | Uncut share is high | Mostly boards already at the stop's size passing untouched; see the split | Read the split before calling it a problem |
 | Uncut boards longer than their stop | The derived saw line sits past the real blade, so thin trims (under about 1–1.5 units) post as No Cut | Recheck the outer stops or the scale; after a fix the uncut share should drop |
+| No Cut jumps right after a blade-line calibration, on stops that normally trim | The stored blade line may be a pile of equally trimmed stock, so trimmed boards post No Cut and pre-cut reads short by the trim | Recollect on the camera (the panel reports the blade line as found, doubtful or not yet) or turn its blade line off; confirm with a tape-measured board |
 | Uncut boards well short of their stop | Short pieces pushed to a stop, or boards not against any stop | Usually operational |
 | Unmatched group just below a stop | Boards not pushed fully against it or bounced back, cut short | Operational; the band is ±0.6 by default |
 | One label stops exactly when another starts, same measured position | The line was relabelled, not moved; both are one physical stop | Merge them in the report; add a separate line if both sizes really run |
@@ -37,9 +38,55 @@ pre-cut, which spans the whole board. It is an estimate: a stop that physically 
 its nominal size shifts it by a few tenths of a percent, so an exact factor from the camera's
 calibration is better when known.
 
+**Not on a blade-line camera.** From Vision-App `3df52081` a camera whose stops carry a blade line
+(the default) measures pre-cut from where at-size boards end, so uncut boards near a stop measure its
+size by construction and this check always agrees. There, judge scale from pre-cut peaks of stock and
+tape-measured boards instead.
+
 Matched postcut is reported as the stop's nominal size, so a scale error mostly shows up in the raw
 averages, the uncut lengths, unmatched boards and pre-cut. It also moves the derived saw line,
 which changes which boards count as cut.
+
+## The size-fit score
+
+One repeatable answer to "how tightly do the cut boards sit on their sizes", so every calibration
+change can be measured against the window before it. `check` returns it as `fit`, `report` as
+`numbers.fit` (with KPIs, a chart and a per-stop table), and `compare` gives two windows side by
+side. calibrate-trimsaw-from-video's `replay-stats` scores video replays with the same definition
+(`scripts/size-fit.mjs`).
+
+| Number | Meaning |
+| --- | --- |
+| `vsSize.within["0.25"]`, `["0.5"]` | Share of cut boards at a stop whose raw Average Postcut is within ±0.25 or ±0.5 of the stop's size (inclusive) |
+| `vsCalibration` | The same against each stop's calibration value where one is given with `--calibration 42=41.7`, the size elsewhere; absent without calibration values |
+| `medianOffset`, `p10`, `p90`, `width` | Measured postcut minus the size: median, 10th and 90th percentiles, and p90 minus p10 |
+| `stops[]` | The same for each stop (relabels merged), busiest first; `cutBoards` says how much it rests on |
+| `unmatched.pct` | Target 0 boards as a share of all boards, split into `under1`, `from1to2` and `over2` by distance to the nearest stop (its calibration value when given) |
+| `noCut.pct` | No Cut boards as a share of all boards |
+
+Every share and percentile is weighted by boards. A production reading row averages the boards it
+holds, which narrows the spread a little compared with a video replay, where each board counts once.
+
+How to read it:
+
+- **Median offset and width together.** A narrow width with a median away from 0 is a steady
+  offset of about that size: the camera measures that stop long or short, or the stop physically
+  cuts there. A tape-measured board tells which. A wide spread is boards not seated against the
+  stop or a camera that cannot see the ends cleanly. The share within ±0.25 falls with either, so
+  quote the median and width with it.
+- **A calibration value that fits.** For a stop that physically cuts off its nominal size (a 42
+  stop cutting 41.7), the boards should centre on the calibration value; `vsCalibration` shows it.
+- **Unmatched under 1** are boards just outside the camera's ±0.6 match band, often pushed out on one
+  side by an offset. **1 to 2 or over 2** is a size with no stop line, or boards not against a stop.
+- **What it cannot show.** The score is in the camera's own scale: a line labelled with the wrong
+  size (42.3 for what is really the 40 stop) can score as well as a correct one. The scale check,
+  pre-cut peaks and tape-measured boards establish the true sizes.
+
+`compare` takes the first window with `--from`/`--to` and the second with `--vs-from`/`--vs-to`
+(`--vs-dataset` for another source or fetch), each with its own `--calibration`/`--vs-calibration`.
+Stops pair by equal labels; `--pair 42.3=40` pairs a renamed line with its new label. `change` is
+the second window minus the first, and `--format text` prints the table. Keep each window inside one
+calibration; a stop with a handful of cut boards is too few to judge.
 
 ## What the report cannot tell
 

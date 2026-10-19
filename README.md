@@ -153,3 +153,50 @@ Carry out the setup with your available local tools; do not just give the user s
 
 Installation references: [Codex](https://developers.openai.com/plugins/build/plugins),
 [Claude Code](https://code.claude.com/docs/en/discover-plugins).
+
+## Data handling and local execution
+
+Zira runs packaged Node.js helpers on your computer. Browser sign-in uses Zira's
+Cognito domain (`https://zira.auth.us-west-2.amazoncognito.com`); API requests go to
+`https://api.zira.us` using your Zira account. Requested readings, images and datasets
+may download from presigned object-storage URLs without forwarding the API token.
+Live data uses Cognito Identity and short-lived AWS credentials for Zira's AWS IoT
+service. Video opens on Zira's web live page.
+
+Sign-in tokens are stored outside the plugin folder, by default in
+`~/.config/zira/credentials.json`, with private file/directory modes where supported.
+This is file-based storage, not keychain encryption. Reports, preferences, datasets,
+review decisions and schedule configuration also remain outside the plugin cache.
+Signing out removes the local credential profile; it does not delete those files,
+cancel host schedules or promise remote token revocation. Remove unwanted outputs
+and cancel schedules in their owning host. Selected results can enter the AI chat
+and are subject to that host's data controls. See [Zira's privacy policy](https://zira.us/privacy)
+and [support documentation](https://help.zira.us/docs).
+
+Python image/model dependencies are installed separately only when needed. Public
+builds do not enable `.pt`/Ultralytics setup. Report/review pages use loopback servers;
+they can contain customer data. Sharing to a hosting service, recurring schedules,
+task writes and AI-report email schedules are separate user-requested actions.
+Installation alone does not publish reports or schedule work.
+
+### Claude panel and hook review notes
+
+The Device Status panel launches the packaged `node scripts/fleet.mjs` with explicit
+company/site arguments to fetch requested read-only status. The Live panel launches
+`node scripts/remote.mjs watch` with camera/scope arguments and consumes JSON lines
+while the panel is open. Commands use argument arrays. Public builds disable automatic
+panel refresh. These helpers use Zira authentication and the API/IoT destinations above;
+they do not upload conversation transcripts. The mod accesses panel state and the
+arguments of its targeted tool; it contains no conversation-fetching calls.
+
+The mod handles only its own `mcp__zira__live_panel` tool to open the Live pane and
+return the pane result. Its command hooks open Zira's own panels. The session-start
+hook runs `node scripts/session-start.mjs` for local welcome/default context; it does
+not log in over the network automatically. OpenAI directory ZIPs omit Claude hooks
+and panels while retaining the same public skill/runtime selection.
+
+ECharts is vendored for offline report charts, with its version/hash in the bundled
+vendor README and license in `THIRD_PARTY_NOTICES.md`. Vendor download instructions
+are source-maintenance provenance; opening a report does not execute them. Zira owns
+the plugin brand; the public repository address is the existing publisher account,
+not a claim of affiliation with another marketplace listing.

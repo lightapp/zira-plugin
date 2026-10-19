@@ -1,13 +1,14 @@
 {
   "name": "zira",
   "displayName": "Zira",
-  "version": "0.3.51-preview.1",
+  "version": "0.3.51-preview.6",
   "description": "Run Zira from your AI chat: ask about production data, check device health, build and schedule readings reports, manage tasks and set up vision devices.",
   "author": {
     "name": "Zira",
     "url": "https://zira.us"
   },
   "homepage": "https://zira.us",
+  "icon": "./assets/zira-directory-icon.png",
   "keywords": [
     "zira",
     "operations",

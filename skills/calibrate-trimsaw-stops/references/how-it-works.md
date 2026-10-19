@@ -1,7 +1,7 @@
 # How the calibration values are worked out
 
 A bucket-path trimsaw camera measures along a straight line between its stops and its derived saw
-line. If its calibration is off, every measured length follows one rule:
+line. This advisory plan assumes an approximately affine error over the selected range:
 
 ```
 measured = a × real + b
@@ -21,7 +21,8 @@ measured = a × real + b
    `42.40 / 0.95 = 44.66`. When the two disagree by more than 0.4, boards may bounce off that stop or
    its line may sit away from where boards stop.
 
-The calibration value to enter on each line is its real size. The size label (the nominal jig size
+The suggested calibration value is an estimated size under those assumptions, not independently
+measured truth. The size label (the nominal jig size
 used for reporting) stays as it is, so a stop that physically cuts 44.7 can still report 45. After
 the values are entered the camera refits its scale and saw line from them; lines without enough
 boards use the camera's own "Use calibration suggestion", which fits them to the other lines.
@@ -34,3 +35,6 @@ boards use the camera's own "Use calibration suggestion", which fits them to the
 - Too few boards: the cut peak needs about 30 boards per stop; 100 or more gives high confidence.
 
 Tape-measured boards remain the ground truth for the anchor and any doubtful stop.
+Changing calibration values also changes the derived saw. A better numerical match to jig labels
+does not prove that saw is physically correct. Perspective/nonlinear errors may violate this model.
+If the UI hides bracketed calibration values, enable **Show calibration values** before editing them.

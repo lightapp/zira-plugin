@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build a Trimsaw Dashboard"
+  short_description: "Choose saws and create a Zira validation dashboard"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $build-trimsaw-dashboard to create a trimsaw validation dashboard. Ask which data sources I want to include."

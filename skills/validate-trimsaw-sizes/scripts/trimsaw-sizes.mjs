@@ -14,19 +14,32 @@ import { formatLocal, parseLocal } from "../../readings-report/scripts/query-cor
 import { ROUTES, serveDetached, writeReport } from "../../readings-report/scripts/readings.mjs";
 import { LIMITS, fetchDataset, home, loadDataset, readDataset } from "../../readings-report/scripts/store.mjs";
 import { neighboringStops, deriveNeighborColumns, neighborSections } from "./neighbor-stops.mjs";
+import {
+  DISTANCE_BANDS, TOLERANCES, compareFits, distanceBand, formatComparison, nearestStop, parseCalibrations, parsePairs, sizeFit, stopRefs, wquantile,
+} from "./size-fit.mjs";
+
+export { wquantile };
 
 const HELP = `Validate Trimsaw Sizes — stop buckets, uncut boards and pre-cut for one trimsaw data source
 node scripts/trimsaw-sizes.mjs windows --company-id ID --site-id ID --device-id ID --from ISO [--to ISO]
-node scripts/trimsaw-sizes.mjs check --dataset ID --from LOCAL --to LOCAL [--merge auto|none|A=B,...]
-node scripts/trimsaw-sizes.mjs report --dataset ID --from LOCAL --to LOCAL [--merge auto|none|A=B,...]
+node scripts/trimsaw-sizes.mjs check --dataset ID --from LOCAL --to LOCAL [--merge auto|none|A=B,...] [--calibration 42=41.7,...]
+node scripts/trimsaw-sizes.mjs report --dataset ID --from LOCAL --to LOCAL [--merge auto|none|A=B,...] [--calibration …]
     [--factor none|auto|F|F,F2@LOCAL] [--title TEXT] [--serve]
+node scripts/trimsaw-sizes.mjs compare --dataset ID --from LOCAL --to LOCAL [--calibration …] [--merge …] [--label TEXT]
+    --vs-from LOCAL --vs-to LOCAL [--vs-dataset ID] [--vs-calibration …] [--vs-merge …] [--vs-label TEXT]
+    [--pair 42.3=40,...] [--format json|text]
 Common: --profile prod|integ
 
 windows fetches the source's readings (cached by readings-report) and lists production periods,
 label changes, relabels and likely calibration changes, with a suggested window after the last one.
 check reports each stop's measured peaks, detected relabels and the scale check: uncut boards at a
 stop should measure about the stop's size; when two or more stops agree on the same error it
-suggests a factor for pre-cut. report writes a derived dataset under $ZIRA_TRIMSAW_HOME (default:
+suggests a factor for pre-cut. check, report and compare give the size-fit score: the share of cut
+boards whose measured postcut is within ±0.25 and ±0.5 of the stop's size (and of its calibration
+value given with --calibration SIZE=VALUE), the median offset and p10-p90 width, the unmatched share
+by distance to the nearest stop and the No Cut share, all weighted by boards. compare scores two
+windows (old and new stops, or two sources with --vs-dataset) side by side; --pair matches renamed
+stops and --format text prints a table. report writes a derived dataset under $ZIRA_TRIMSAW_HOME (default:
 next to the readings cache) and the report; --serve hands it out on 127.0.0.1 like readings-report.
 LOCAL times are site time such as 2026-10-09T10:00. --factor none keeps Zira's pre-cut values.
 Exit 0 success, 2 invalid/failed, 3 incomplete, 4 blocked (JSON explains).
@@ -45,6 +58,7 @@ export const D = {
   precut: "910001", precutBin: "910002", trim: "910003", trimBin: "910004", outcome: "910005",
   stop: "910006", uncutReason: "910007", trimBand: "910008", cutAny: "910010", uncutAny: "910011",
   unmatchedCut: "910012", notAtStop: "910013", binTarget: "910014",
+  offset: "910015", absOffset: "910016", offsetBin: "910017", absOffsetCal: "910018", unmatchedDistance: "910019",
 };
 const cutId = k => String(910100 + k);
 const uncutId = k => String(910120 + k);
@@ -56,15 +70,6 @@ const round = (v, d = 2) => (v === null || v === undefined ? null : Math.round(v
 export const label = v => (v === null || v === undefined ? "" : Number.isInteger(v) ? String(v) : String(round(v, 2)));
 const local = t => formatLocal(t, "minute").replace(" ", "T");
 const wsum = pairs => pairs.reduce((s, [, w]) => s + w, 0);
-
-export function wquantile(pairs, q) {
-  const sorted = pairs.filter(([v, w]) => v !== null && w > 0).sort((a, b) => a[0] - b[0]);
-  const total = wsum(sorted);
-  if (!total) return null;
-  let c = 0;
-  for (const [v, w] of sorted) { c += w; if (c >= q * total) return v; }
-  return sorted.at(-1)[0];
-}
 
 // Mode of 0.1-wide bins after a [1,2,1] smoothing, refined by the weighted mean around it.
 export function smoothedMode(pairs, width = 0.1) {
@@ -114,6 +119,10 @@ export function mapLabel(target, merges) {
   }
   return v;
 }
+
+/** Reading rows as size-fit boards: relabels merged, raw Average Postcut (posted Postcut for an unmatched row without it). */
+export const fitBoards = (rows, merges = []) => rows.map(r => ({ stop: r.target > 0 ? mapLabel(r.target, merges) : null,
+  length: r.avgPost ?? (r.target > 0 ? null : r.postcut), units: r.units, cut: !r.noCut }));
 
 function labelStats(rows) {
   const by = new Map();
@@ -235,9 +244,10 @@ export const BANDS = ["Under 2", "2–6", "6–10", "10 or more"];
 const band = trim => (trim < 2 ? BANDS[0] : trim < 6 ? BANDS[1] : trim < 10 ? BANDS[2] : BANDS[3]);
 
 /** Adds the derived columns to one device's arrays, for rows inside [from, to). */
-export function deriveColumns(device, { from, to, merges, schedule, stops, unit = "in", binTarget = new Map() }) {
+export function deriveColumns(device, { from, to, merges, schedule, stops, unit = "in", binTarget = new Map(), calibrations = new Map() }) {
   const n = device.t.length;
   const shown = stops.slice(0, MAX_STOPS).map(s => s.stop);
+  const refs = stopRefs(stops.map(s => s.stop), calibrations);
   const cols = Object.fromEntries([...Object.values(D), ...shown.flatMap((_, k) => [cutId(k), uncutId(k)])].map(id => [id, new Array(n).fill(null)]));
   for (const r of boardRows(device)) {
     if (r.t < from || r.t >= to) continue;
@@ -265,6 +275,13 @@ export function deriveColumns(device, { from, to, merges, schedule, stops, unit 
       }
     } else outcome = "Cut, not at a stop";
     cols[D.outcome][i] = outcome;
+    // Size fit, as in size-fit.mjs: cut boards against their stop, unmatched boards against the nearest stop.
+    if (!r.noCut && stop !== null && r.avgPost !== null) {
+      const offset = r.avgPost - stop;
+      cols[D.offset][i] = round(offset, 6); cols[D.absOffset][i] = round(Math.abs(offset), 6); cols[D.offsetBin][i] = Math.round(offset * 10) / 10;
+      cols[D.absOffsetCal][i] = round(Math.abs(r.avgPost - (calibrations.get(stop) ?? stop)), 6);
+    }
+    if (stop === null) cols[D.unmatchedDistance][i] = distanceBand(nearestStop(r.avgPost ?? r.postcut, refs)?.distance);
     cols[D.cutAny][i] = !r.noCut && stop !== null && k < 0 ? r.units : 0;
     cols[D.uncutAny][i] = r.noCut ? r.units : 0;
     cols[D.unmatchedCut][i] = !r.noCut && stop === null ? r.units : 0;
@@ -282,6 +299,9 @@ export function deriveColumns(device, { from, to, merges, schedule, stops, unit 
     [D.trimBand, "Trim band", null, "list"], [D.cutAny, "Cut to other stops", null, "numeric"],
     [D.uncutAny, "Uncut boards", null, "numeric"], [D.unmatchedCut, "Cut, not at a stop", null, "numeric"],
     [D.notAtStop, "Uncut, not at a stop", null, "numeric"], [D.binTarget, "Target (most boards at this pre-cut)", null, "list"],
+    [D.offset, "Offset from stop size", unit, "numeric"], [D.absOffset, "Distance from stop size", unit, "numeric"],
+    [D.offsetBin, "Offset (0.1 bins)", unit, "numeric"], [D.absOffsetCal, "Distance from calibration value", unit, "numeric"],
+    [D.unmatchedDistance, "Unmatched: distance to nearest stop", null, "list"],
     ...shown.flatMap((s, j) => [[cutId(j), `Cut to ${label(s)}`, null, "numeric"], [uncutId(j), `Uncut at ${label(s)}`, null, "numeric"]]),
   ];
   return meta.map(([id, name, u, dataType]) => ({ id, name, unit: u, dataType, present: true }));
@@ -412,6 +432,23 @@ const fmt = v => (v === null || v === undefined ? "—" : String(v));
 // A stop needs enough boards for its own chart or call-out.
 export const significant = (stops, total, key = "boards") => stops.filter(x => x[key] >= Math.max(30, 0.02 * total));
 
+const signed = v => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${v}`);
+const [T1, T2] = TOLERANCES.map(String);
+const fitPair = x => `${x.within[T1]}% / ${x.within[T2]}%`;
+
+/** The size-fit score in plain words, one bullet per line, for the summary and the size-fit section. */
+export function fitLines(fit) {
+  if (!fit?.vsSize) return ["- No cut boards at a stop have a measured length in this window, so there is no size fit."];
+  const v = fit.vsSize, c = fit.vsCalibration, u = fit.unmatched;
+  const lines = [`- **${v.within[T1]}% of cut boards measure within ±${T1} of their stop's size and ${v.within[T2]}% within ±${T2}** (${fit.cutBoards.toLocaleString("en-US")} cut boards; median offset ${signed(v.medianOffset)}, p10 to p90 ${signed(v.p10)} to ${signed(v.p90)}, a width of ${v.width}).`];
+  if (c) lines.push(`- **Against the calibration values** (the size where none is given): ${c.within[T1]}% within ±${T1} and ${c.within[T2]}% within ±${T2}, median offset ${signed(c.medianOffset)}.`);
+  const per = fit.stops.filter(x => x.vsSize).map(x => `${x.stop}${x.calibration !== null ? ` (calibration ${x.calibration})` : ""}: ${fitPair(x.vsSize)}, median ${signed(x.vsSize.medianOffset)}, width ${x.vsSize.width}${x.vsCalibration ? `; against ${x.calibration} ${fitPair(x.vsCalibration)}, median ${signed(x.vsCalibration.medianOffset)}` : ""}${x.cutBoards < 30 ? ` (only ${x.cutBoards} cut boards)` : ""}`);
+  if (per.length) lines.push(`- **Per stop, within ±${T1} / ±${T2}:** ${per.join("; ")}.`);
+  lines.push(`- **Unmatched: ${u.pct}% of boards,** ${u.under1}% under 1 from a stop (just outside the camera's ±0.6 match band), ${u.from1to2}% 1 to 2 away and ${u.over2}% further${u.noLength ? `; ${u.noLength}% have no length` : ""}. **No Cut: ${fit.noCut.pct}%.**`);
+  lines.push("- The score shows how tightly boards sit on the sizes the camera posts, in its own scale. A stop labelled with the wrong size can still score well; the scale check and pre-cut peaks catch that.");
+  return lines;
+}
+
 export function summaryText({ s, merges, scale, schedule, unit, window }) {
   const main = significant(s.stops, s.boards, "cutBoards");
   const u = unit ? ` ${unit === "in" ? "inches" : unit}` : "";
@@ -421,6 +458,7 @@ export function summaryText({ s, merges, scale, schedule, unit, window }) {
   if (offs.length) lines.push(`- **Cut boards peak at:** ${offs.join(", ")} (Zira's measured postcut). Posted Postcut is the stop's size; these raw values show where the camera places each stop.`);
   lines.push("- **Uncut boards are reported under the stop they sat against.** Their own length goes to Average Postcut, which pulls each bucket's raw average below the stop.");
   if (merges.length) lines.push(`- **Relabelled lines:** ${merges.map(m => `${label(m.from)} became ${label(m.to)} at ${m.at.replace("T", " ")} (same measured position, ${fmt(m.measuredFrom)} vs ${fmt(m.measuredTo)})`).join("; ")}. They are counted as one stop here.`);
+  if (s.fit) lines.push("", "### Size fit", "", ...fitLines(s.fit));
   lines.push("", "### Scale check", "");
   if (scale.stops.length) lines.push(`- Uncut boards at each stop measure: ${scale.stops.map(p => `${label(p.stop)} at ${p.measured} (${p.uncutBoards} boards)`).join(", ")}. ${scale.note}`);
   else lines.push(`- ${scale.note}`);
@@ -458,12 +496,26 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
   const total = stops.reduce((a, x) => a + x.boards, 0);
   const big = significant(shown, total);
   const longStop = [...significant(s.stops, s.boards, "cutBoards")].sort((a, b) => b.longTrimPct - a.longTrimPct)[0];
+  const fitCols = [...cutCols, ...(stops.length > MAX_STOPS ? [{ id: D.cutAny, name: "Cut to other stops" }] : [])];
+  const calibrated = !!s.fit?.vsCalibration;
+  const within = (metric, t, lab) => ({ metric: M.units, op: "share", where: { metric, op: "<=", value: t }, label: lab });
+  const cutWithin = (metric, t, lab) => ({ label: lab, unit: "%", query: { filters: [{ metric, op: "not-empty" }], measures: [within(metric, t)] } });
   const sections = [
     { title: "Boards by stop label, every 15 minutes", text: `The labels as Zira posted them. 0 is unmatched.${merges.length ? " Relabelled lines show as one series ending where the next begins." : ""}`,
       chart: { query: { interval: "15-minutes", groupBy: M.target, filters: [{ metric: M.target, op: "not-empty" }, { metric: M.units, op: ">", value: 0 }], measures: [sumOf(M.units, "Boards")] },
         option: { yAxis: { name: "Boards" } } } },
     ...big.slice(0, 4).map(x => ({ title: `${label(x.stop)} stop — cut boards: measured postcut`,
       text: "Zira's raw measurement of each cut board. A tight peak away from the stop's size is a calibration offset, not noise.", chart: histogram(x.stop) })),
+    ...(s.fit?.vsSize ? [{ title: "Size fit: cut boards around their stop sizes",
+      text: `Measured postcut minus the stop's size for each cut board at a stop, in 0.1 bins and stacked by stop. A tight peak at 0 is a well-placed stop; a peak away from 0 is a calibration offset (a stop with a calibration value peaks at that value minus its size). Weighted by boards, for the authored window:\n\n${fitLines(s.fit).slice(0, -1).join("\n")}`,
+      chart: { query: { groupBy: D.offsetBin, pivot: false, filters: [{ metric: D.offsetBin, op: "not-empty" }], measures: fitCols.map(c => sumOf(c.id, c.name)) },
+        option: { xAxis: { type: "value", name: `${u} from the stop size`, scale: true }, yAxis: { name: "Boards" }, series: bars(fitCols.map(c => c.name), "Offset (0.1 bins)").map(b => ({ ...b, barMaxWidth: 14 })) } } },
+    { title: "Size fit per stop", text: `Cut boards at each stop and the share within ±${T1} and ±${T2} of its size${calibrated ? " and of its calibration value (the size where none was given)" : ""}, weighted by boards. These follow the From/To selection; the median and p10–p90 above are for the authored window.`,
+      table: { query: { groupBy: D.stop, pivot: false, filters: [{ metric: D.absOffset, op: "not-empty" }], measures: [
+        sumOf(M.units, "Cut boards"),
+        ...TOLERANCES.map(t => within(D.absOffset, t, `Within ±${t} of size %`)),
+        ...(calibrated ? TOLERANCES.map(t => within(D.absOffsetCal, t, `Within ±${t} of calibration %`)) : []),
+      ], sort: { by: "Cut boards", dir: "desc" } } } }] : []),
     { title: "Unmatched boards (Target 0): posted Postcut",
       text: "Boards outside every stop's band post their own length. A group just below a stop is boards that were not pushed fully against it.",
       chart: { query: { groupBy: M.postcut, pivot: false, filters: [{ metric: M.target, op: "=", value: 0 }, { metric: M.units, op: ">", value: 0 }], measures: [sumOf(M.units, "Boards")], sort: { by: names.postcut, dir: "asc" } },
@@ -510,6 +562,9 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
       { label: "…short or not at a stop", unit: "%", query: { measures: [{ metric: M.units, op: "share", where: { metric: D.uncutReason, op: "in", value: ["Short of stop", "Not at a stop"] } }] } },
       { label: "Unmatched (Target 0)", unit: "%", query: { measures: [{ metric: M.units, op: "share", where: { metric: M.target, op: "=", value: 0 } }] } },
       { label: "Cut boards shorter than their stop", unit: "%", query: { measures: [{ metric: D.trim, op: "percent", where: { op: "<", value: 0 } }] } },
+      ...TOLERANCES.map(t => cutWithin(D.absOffset, t, `Cut within ±${t} of size`)),
+      ...(calibrated ? TOLERANCES.map(t => cutWithin(D.absOffsetCal, t, `Cut within ±${t} of calibration`)) : []),
+      { label: "Unmatched, under 1 from a stop", unit: "%", query: { measures: [{ metric: M.units, op: "share", where: { metric: D.unmatchedDistance, op: "=", value: DISTANCE_BANDS[0] } }] } },
     ],
     sections,
   };
@@ -567,7 +622,8 @@ export async function windows({ call, profile, companyId, siteId, deviceId, from
     readings: rows.length, complete: manifest.complete, notes: manifest.notes, relabels: merges, ...timeline(rows, merges) };
 }
 
-export async function check({ datasetId, profile, from: f, to: t, merge = "auto", root }) {
+export async function check({ datasetId, profile, from: f, to: t, merge = "auto", calibration, root }) {
+  const calibrations = parseCalibrations(calibration);
   const { from, to, window } = windowArgs(f, t);
   const { source, device } = await loadSource({ datasetId, profile, root });
   const rows = boardRows(device).filter(r => r.t >= from && r.t < to);
@@ -581,12 +637,36 @@ export async function check({ datasetId, profile, from: f, to: t, merge = "auto"
   });
   return { kind: "trimsaw-check", dataset: datasetId, source: { id: source.id, name: source.name }, window,
     boards: rows.reduce((s, r) => s + r.units, 0), relabels: merges, stops: peaks, scale,
-    neighbors: neighboringStops(rows, { from, to }) };
+    fit: sizeFit(fitBoards(rows, merges), { calibrations }), neighbors: neighboringStops(rows, { from, to }) };
 }
 
-export async function report({ datasetId, profile, from: f, to: t, merge = "auto", factor = "none", title, serve = false,
+async function fitWindow({ datasetId, profile, from: f, to: t, merge = "auto", calibration, label: name, root }) {
+  const { from, to, window } = windowArgs(f, t);
+  const calibrations = parseCalibrations(calibration);
+  const { source, device } = await loadSource({ datasetId, profile, root });
+  const rows = boardRows(device).filter(r => r.t >= from && r.t < to);
+  if (!rows.length) throw new Error(`No boards from ${window.from} to ${window.to} in dataset ${datasetId}; pick another window with the windows command`);
+  const merges = merge === "auto" ? findRelabels(rows) : parseMerges(merge);
+  return { label: name ?? `${window.from.replace("T", " ")} to ${window.to.replace("T", " ")}`, dataset: datasetId,
+    source: { id: source.id, name: source.name.trim() }, window, relabels: merges, calibrations: Object.fromEntries([...calibrations].map(([k, v]) => [label(k), v])),
+    fit: sizeFit(fitBoards(rows, merges), { calibrations }) };
+}
+
+/** Two windows' size-fit scores side by side: old against new stops, or one source against another. */
+export async function compare({ datasetId, profile, from, to, merge, calibration, label: name, vsDatasetId, vsFrom, vsTo, vsMerge, vsCalibration, vsLabel, pair, root }) {
+  if (!vsFrom || !vsTo) throw new Error("compare needs the second window: --vs-from LOCAL --vs-to LOCAL");
+  const pairs = parsePairs(pair);
+  const a = await fitWindow({ datasetId, profile, from, to, merge, calibration, label: name, root });
+  const b = await fitWindow({ datasetId: vsDatasetId ?? datasetId, profile, from: vsFrom, to: vsTo, merge: vsMerge ?? merge, calibration: vsCalibration, label: vsLabel, root });
+  const unknown = [...pairs].filter(([x, y]) => !a.fit.stops.some(s => s.stop === x) || !b.fit.stops.some(s => s.stop === y));
+  return { kind: "trimsaw-compare", a, b, pairs: Object.fromEntries(pairs), ...(unknown.length ? { notes: [`No boards for --pair ${unknown.map(p => p.join("=")).join(", ")} in its window.`] } : {}),
+    rows: compareFits(a.fit, b.fit, { pairs }) };
+}
+
+export async function report({ datasetId, profile, from: f, to: t, merge = "auto", factor = "none", calibration, title, serve = false,
   root = home(), trimsawRoot = derivedHome(process.env, root), idleMinutes = 120, now = new Date(), env = process.env }) {
   const { from, to, window } = windowArgs(f, t);
+  const calibrations = parseCalibrations(calibration);
   const { manifest, source, device } = await loadSource({ datasetId, profile, root });
   const rows = boardRows(device).filter(r => r.t >= from && r.t < to);
   if (!rows.length) throw new Error("No boards in that window; pick another window with the windows command");
@@ -601,10 +681,10 @@ export async function report({ datasetId, profile, from: f, to: t, merge = "auto
   const stops = stopList(rows, merges, { from, to });
   const unit = displayUnit(stops, source);
   const neighbors = neighboringStops(rows, { from, to });
-  const opts = { from, to, merges, schedule, stops, unit, binTarget: binTargets(rows, { from, to, merges, schedule }) };
+  const opts = { from, to, merges, schedule, stops, unit, calibrations, binTarget: binTargets(rows, { from, to, merges, schedule }) };
 
   // Copy every week of the source with the derived columns into the trimsaw root.
-  const key = createHash("sha256").update(JSON.stringify(["neighbors-v1", manifest.id, manifest.fetchedAt, window, merges, schedule])).digest("hex").slice(0, 10);
+  const key = createHash("sha256").update(JSON.stringify(["size-fit-v1", manifest.id, manifest.fetchedAt, window, merges, schedule, [...calibrations]])).digest("hex").slice(0, 10);
   const derivedId = `ds-${key}`;
   let metrics = null;
   for (const c of manifest.chunks) {
@@ -624,7 +704,7 @@ export async function report({ datasetId, profile, from: f, to: t, merge = "auto
   await writePrivate(path.join(trimsawRoot, manifest.profile, "datasets", `${derivedId}.json`), derived);
 
   const data = await loadDataset(derived, { root: trimsawRoot });
-  const s = summarize(data.devices[0], { from, to, stops });
+  const s = { ...summarize(data.devices[0], { from, to, stops }), fit: sizeFit(fitBoards(rows, merges), { calibrations }) };
   const summary = summaryText({ s, merges, scale, schedule, unit, window });
   const metricName = (id, fallback) => source.metrics.find(m => m.id === id)?.name ?? fallback;
   const names = { avgPost: metricName(M.avgPost, "Average Postcut Length"), postcut: metricName(M.postcut, "Postcut Length") };
@@ -645,7 +725,10 @@ export async function main(args = process.argv.slice(2)) {
   const { values: o } = parseArgs({ args: args.slice(1), options: {
     profile: { type: "string" }, "company-id": { type: "string" }, "site-id": { type: "string" }, "device-id": { type: "string" },
     dataset: { type: "string" }, from: { type: "string" }, to: { type: "string" }, merge: { type: "string" },
-    factor: { type: "string" }, title: { type: "string" }, serve: { type: "boolean" },
+    factor: { type: "string" }, title: { type: "string" }, serve: { type: "boolean" }, calibration: { type: "string" },
+    label: { type: "string" }, "vs-dataset": { type: "string" }, "vs-from": { type: "string" }, "vs-to": { type: "string" },
+    "vs-merge": { type: "string" }, "vs-calibration": { type: "string" }, "vs-label": { type: "string" }, pair: { type: "string" },
+    format: { type: "string" },
   } });
   const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
   const log = message => process.stderr.write(`${message}\n`);
@@ -655,10 +738,22 @@ export async function main(args = process.argv.slice(2)) {
       return windows({ call: await liveSession(profile, { allow: ROUTES, maxRequests: LIMITS.requests }), profile,
         companyId: o["company-id"], siteId: o["site-id"], deviceId: o["device-id"], from: o.from, to: o.to, log });
     case "check":
-      return check({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto" });
+      return check({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto", calibration: o.calibration });
     case "report":
       return report({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto", factor: o.factor ?? "none",
-        title: o.title, serve: !!o.serve });
+        calibration: o.calibration, title: o.title, serve: !!o.serve });
+    case "compare": {
+      if (![undefined, "json", "text"].includes(o.format)) throw new Error("--format is json or text");
+      const result = await compare({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto", calibration: o.calibration,
+        label: o.label, vsDatasetId: o["vs-dataset"], vsFrom: o["vs-from"], vsTo: o["vs-to"], vsMerge: o["vs-merge"],
+        vsCalibration: o["vs-calibration"], vsLabel: o["vs-label"], pair: o.pair });
+      if (o.format !== "text") return result;
+      const head = side => `${side.label}: ${side.source.name} (${side.source.id}), ${side.window.from.replace("T", " ")} to ${side.window.to.replace("T", " ")}`
+        + `${Object.keys(side.calibrations).length ? `, calibration ${Object.entries(side.calibrations).map(([k, v]) => `${k}=${v}`).join(", ")}` : ""}`
+        + `${side.relabels.length ? `, relabels ${side.relabels.map(m => `${label(m.from)}→${label(m.to)}`).join(", ")}` : ""}`;
+      process.stdout.write(`${head(result.a)}\n${head(result.b)}\n${(result.notes ?? []).join("\n")}${result.notes ? "\n" : ""}\n${formatComparison(result.rows, { a: result.a.label, b: result.b.label })}\n`);
+      return undefined;
+    }
     default: throw new Error(`Unknown command ${args[0]}; run with --help`);
   }
 }

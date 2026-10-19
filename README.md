@@ -200,3 +200,7 @@ vendor README and license in `THIRD_PARTY_NOTICES.md`. Vendor download instructi
 are source-maintenance provenance; opening a report does not execute them. Zira owns
 the plugin brand; the public repository address is the existing publisher account,
 not a claim of affiliation with another marketplace listing.
+
+Product terms: <https://zira.us/terms.html>. Zira retains service records created through the plugin
+for longer than 30 days, according to the customer agreement and privacy policy. Local files
+remain under the user's control until removed.

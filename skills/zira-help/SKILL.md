@@ -7,4 +7,6 @@ For questions about what Zira is, what it does or what you can help with, read [
 
 Ask which part of Zira the user needs help with only when their question is missing. Use the public Zira documentation MCP `search_docs` then `read_doc` if connected. Otherwise use the host's web tools to search/read `https://help.zira.us/docs`, `/developers` or `/whats-new` and cite the matching article. If browsing is unavailable, provide the relevant help link and say current documentation has not been checked. Present how-to answers with a one-line summary, numbered steps and the article link.
 
+For installing Zira, setting it up, or why Zira isn't available in a chat (for example Claude's Chat or Cowork tab), follow [setup help](../../references/setup-help.md) instead of searching.
+
 Keep customer inventory and private records out of public searches. An API example is not proof that the plugin can call that endpoint. Distinguish an explanation from an action performed on the user's account.

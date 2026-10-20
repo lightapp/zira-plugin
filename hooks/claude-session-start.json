@@ -4,7 +4,11 @@
       {
         "matcher": "startup",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.mjs\"", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.mjs\" || cat \"${CLAUDE_PLUGIN_ROOT}/hooks/needs-node.json\"",
+            "timeout": 10
+          }
         ]
       }
     ]

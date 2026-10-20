@@ -9,25 +9,30 @@ the apps' official plugin directories.
 
 ## Install
 
-**Ask your agent to install it. You do not need to open a terminal.**
+**You don't type any commands. Claude or Codex installs Zira for you in about five minutes.**
 
-1. Open a local chat in **Codex** or **Claude Code** on your computer.
-2. Copy the prompt below, paste it into the chat and send it.
-3. Approve any installation permission the app requests. When the agent confirms
-   installation, start a new chat and say **“Help me get started with Zira.”**
+1. **Open the right place.** Zira runs on your computer, so it only works here:
+   - **Claude desktop app:** click **Code** (next to Chat and Cowork) and start a new session.
+     Pick any folder, such as Documents, and keep it on this computer (**Local**).
+   - **Codex app:** start a new thread that runs on this computer (**Local**), not a Cloud task.
+2. **Paste this message and send it:**
 
-```text
-Install the Zira plugin for the app I am using from https://github.com/lightapp/zira-plugin. Read its README and follow the “For agents: install Zira” instructions. Do the installation for me, preserve any existing Zira settings and data, and verify that it worked. I do not use the terminal; guide me through any clicks or permissions you need.
-```
+   ```text
+   Install the Zira plugin from https://github.com/lightapp/zira-plugin for the app I'm using. Read its README and follow "For agents: install Zira". I'm not technical: do everything for me, including any helper programs Zira needs, explain each step in plain words and tell me exactly what to click. Keep my existing Zira settings.
+   ```
 
-You can also simply send your agent: **“Install this plugin for me:
-https://github.com/lightapp/zira-plugin”**. Include the install request when sharing
-the link so the agent knows what you want it to do.
+3. **Click Allow** when asked. If your computer needs a free helper program called Node.js,
+   your assistant offers to set it up for you: you just click through a standard installer.
+4. When it says Zira is installed, **start a new session in the same place** and say
+   **“Help me get started with Zira.”** A Zira sign-in page opens the first time; sign in as usual.
 
-Use a local chat that can make changes on your computer. A regular Claude or ChatGPT
-web chat cannot install this plugin on your computer. Your agent will check the
-required software and explain any setup needed. No GitHub account, private repository
-access or API key is needed. Sign in with your own Zira account when you first use Zira.
+> **Every time you use Zira, come back to the same place:** the **Code** tab in the Claude app,
+> or a Local thread in Codex. Claude's Chat and Cowork tabs, claude.ai in a browser and ChatGPT
+> can't see your Zira data. There, the assistant may try to click through Zira in a browser,
+> which is slow.
+
+No GitHub account, API key or terminal is needed. You see only the companies and sites your
+Zira account can see. To update later, ask in the same place: **“Update the Zira plugin.”**
 
 <details>
 <summary>Manual installation commands</summary>
@@ -120,17 +125,25 @@ Use these steps when the user asks to install Zira from this repository. A bare 
 without an installation request is not permission to change the user's computer.
 Carry out the setup with your available local tools; do not just give the user shell commands.
 
+Assume the user is not technical. Follow [setup help](references/setup-help.md) for tone and
+for everything beyond the plugin itself: which app and tab to use, installing Node.js or Git
+for them, and what they will see. Never ask them to type commands; tell them what to click.
+
 1. **Identify the current host.** Install only in the Codex or Claude Code app the user
    is using, even if both clients are installed. Use host context; ask which app only if
    it is unclear. Confirm you have access to the user's computer, not just a remote/cloud
-   sandbox. If local execution is unavailable, explain how to open a local Codex or Claude
-   Code chat and reuse the same prompt. Do not claim a cloud install reaches their computer.
+   sandbox. Claude's Chat and Cowork tabs, web chats and cloud sessions cannot install or
+   run Zira, even when they can see a folder. There, stop and give the steps from setup
+   help's “Where Zira works” for their app (for the Claude desktop app: click **Code**,
+   start a new session, paste the same message). Do not claim a cloud install reaches their computer.
 2. **Check prerequisites and existing state.** Check Git, Node.js 20+ and the host's
    supported plugin commands. Use `codex plugin list --json` and
    `codex plugin marketplace list --json`, or the corresponding `claude` commands.
-   If a command is unavailable, check the host's supported installation tools or plugin UI;
-   help the user through the specific missing setup. Do not invent executable paths,
-   edit client configuration files by hand, or silently install system dependencies.
+   If Node.js or Git is missing or too old, explain it in one plain sentence and, once the
+   user agrees, install it for them as setup help describes; then continue. If a plugin
+   command is unavailable, check the host's supported installation tools or plugin UI and
+   walk the user through the specific missing click. Do not invent executable paths, edit
+   client configuration files by hand, or install anything without the user's agreement.
 3. **Select the source.** The public source is `lightapp/zira-plugin`, branch `preview`,
    identity `zira@zira`. For a fresh installation, run the matching commands in
    [Manual installation commands](#install) above. Use the current user's scope.
@@ -148,9 +161,14 @@ Carry out the setup with your available local tools; do not just give the user s
    Do not report success from a downloaded repository or an exit code alone. If a check
    fails, explain what remains and help resolve it; do not start sign-in or account operations
    just to prove installation.
-5. **Finish in plain language.** Report the installed version and ask the user to start a new
-   chat and say “Help me get started with Zira.” Explain any remaining clicks, restart or
-   missing prerequisite. Installation itself does not sign in, create tasks or activate schedules.
+5. **Finish in plain language.** In a few short lines and no technical terms: Zira is
+   installed (version in passing); start a **new** session in this same place and say
+   “Help me get started with Zira”; the first time, they click **Allow** and sign in to Zira
+   in the page that opens. Then, on its own line, where to find Zira every time, in setup
+   help's wording for their app (for the Claude desktop app: “Whenever you want Zira, open
+   the Claude app, click **Code** and start a new session. Chat and Cowork can't see your
+   Zira data.”). Mention any remaining click or restart. Installation itself does not sign
+   in, create tasks or activate schedules.
 
 Installation references: [Codex](https://developers.openai.com/plugins/build/plugins),
 [Claude Code](https://code.claude.com/docs/en/discover-plugins).
@@ -193,7 +211,8 @@ arguments of its targeted tool; it contains no conversation-fetching calls.
 The mod handles only its own `mcp__zira__live_panel` tool to open the Live pane and
 return the pane result. Its command hooks open Zira's own panels. The session-start
 hook runs `node scripts/session-start.mjs` for local welcome/default context; it does
-not log in over the network automatically. OpenAI directory ZIPs omit Claude hooks
+not log in over the network automatically. If Node.js cannot run, the hook prints the bundled
+`hooks/needs-node.json` notice instead, so the user is offered help installing Node.js. OpenAI directory ZIPs omit Claude hooks
 and panels while retaining the same public skill/runtime selection.
 
 ECharts is vendored for offline report charts, with its version/hash in the bundled

@@ -123,6 +123,12 @@ export const ACTIONS = {
   "model.delete": { label: "Remove a model from the camera", status: "model", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl" },
   ...Object.fromEntries(["start", "stop", "continue", "assign", "remove", "apply", "cancel", "clear"].map(c =>
     [`trimsaw.${c}`, { label: `Trim saw stops: ${c}`, status: "trimsaw", risk: "guarded", enabled: false, types: ["vision"], web: "remoteControl" }])),
+  // Not in the platform registry: zira-web's Trim saw stops panel publishes these to the camera's
+  // trimsaw-commands topic itself. Listed (disabled) so a request for them points to the panel.
+  ...Object.fromEntries([["install", "Push uploaded stops"], ["revert", "Undo the last stop push or line edit"], ["edit", "Preview stop line edits"],
+    ["edit-apply", "Apply stop line edits"], ["edit-cancel", "Cancel stop line edits"]].map(([c, label]) =>
+    [`trimsaw.${c}`, { label, status: "trimsaw", risk: "guarded", enabled: false, types: ["vision"], web: "remoteControl",
+      note: "Sent by Zira's Trim saw stops panel; Zira's remote-commands API has no such action." }])),
   "sync.images": { label: "Upload selected images", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl" },
   "sync.videosRaw": { label: "Upload selected raw videos", risk: "guarded", enabled: false, types: ["pallet"], web: "videos" },
   "sync.videosValidation": { label: "Upload selected validation videos", risk: "guarded", enabled: false, types: ["pallet"], web: "videos" },
@@ -210,6 +216,37 @@ const flat2 = (obj, max = MAX_KEYS) => {
   return out;
 };
 const pick = (m, keys) => Object.fromEntries(keys.filter(k => m?.[k] !== undefined && prim(m[k])).map(k => [k, cut(m[k])]));
+const defined = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const text = v => (typeof v === "string" ? v.slice(0, 300) : undefined);
+const texts = (v, max = 10) => (Array.isArray(v) ? v.filter(x => typeof x === "string").slice(0, max).map(text) : undefined);
+const rowsOf = (v, keys, max = 32) => (Array.isArray(v) ? v.slice(0, max).map(x => pick(x, keys)) : undefined);
+
+// The trim saw stop status (Vision-App trimsaw-status meta) as an agent follows a collection or a line
+// edit: flow, labelling, low-confidence lines, the device's warnings and Apply answer, the blade line,
+// a pending line-edit preview and the undo entry. Bounded; the device's own text is cut at 300.
+const TRIMSAW_KEYS = ["flow", "collecting", "boardCount", "newBoardCount", "stopSide", "stopEnd", "axis", "enabled", "path", "misconfigured",
+  "appliedStopCount", "capturedStopCount", "analysisRotationDegrees", "assigningSizes", "deferredRun", "assignedStopCount", "allStopsAssigned",
+  "usable", "canApply", "confidentBoardMinimum", "unlabelledConfidentCount", "unlabelledLowConfidenceCount",
+  "appliedRevision", "lineEditSupported", "installSupported", "installRevertAvailable", "separateJigSizeSupported"];
+export function trimsawMeta(m) {
+  if (!m || typeof m !== "object" || Array.isArray(m)) return undefined;
+  const obj = v => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
+  const blade = obj(m.bladeLine), edit = obj(m.lineEdit), undo = obj(m.undo);
+  return defined({
+    ...pick(m, TRIMSAW_KEYS), summary: text(m.summary), refusal: text(m.refusal), warnings: texts(m.warnings),
+    stops: rowsOf(m.stops, ["index", "pos", "observedBoards", "size", "jigSize", "calibrationSize", "suggested", "lowConfidence", "keptPosition", "existing", "appliedPos"]),
+    appliedStops: rowsOf(m.appliedStops, ["pos", "jigSize", "calibrationSize", "calibrationAdjusted"]),
+    bladeLine: blade ? defined({ ...pick(blade, ["status", "positionPx", "boards", "beyondDerivedSawPx", "enabled", "keepsApplied"]),
+      summary: text(blade.summary), doubts: texts(blade.doubts), perStop: flat(blade.perStop, 32), applied: flat(blade.applied, 4) }) : undefined,
+    lineEdit: edit ? defined({ ...pick(edit, ["appliedRevision", "expiresAtUtcMs", "scaleUnitsPerPx", "sawPositionPx", "agreementUnits"]),
+      summary: text(edit.summary), warnings: texts(edit.warnings),
+      changes: rowsOf(edit.changes, ["op", "index", "jigSize", "calibrationSize", "steps"]),
+      stops: rowsOf(edit.stops, ["pos", "jigSize", "calibrationSize", "change", "fromIndex", "fromPos", "fromJigSize"]),
+      removed: rowsOf(edit.removed, ["index", "pos", "jigSize"]) }) : undefined,
+    undo: undo ? defined({ ...pick(undo, ["available", "kind", "atUtcMs"]), summary: text(undo.summary) }) : undefined,
+    collection: flat(m.collection, 10),
+  });
+}
 
 // The newest reading: lastReading (Vision) or the last of aggregations[].readings (Pallet Vision).
 function newestReading(m) {
@@ -247,7 +284,7 @@ export function statusSummary(kind, m) {
   if (kind === "recording") return { at, ...pick(m, ["state", "requestId", "requesterUsername", "message", "interval", "duration", "count", "recordRaw", "recordValidation", "useDetection", "useCounts"]),
     ...(Array.isArray(m.schedules) ? { schedules: m.schedules.slice(0, 14).map(s => flat(s, 6)) } : {}),
     ...(m.activeClip ? { activeClip: flat(m.activeClip, 8) } : {}), ...(Number.isFinite(m.completedClips) ? { completedClips: m.completedClips } : {}) };
-  if (kind === "trimsaw") return { at, ...pick(m, ["state", "requestId", "message"]), ...(m.meta ? { meta: flat(m.meta, 12) } : {}) };
+  if (kind === "trimsaw") return { at, ...pick(m, ["state", "requestId"]), ...defined({ message: text(m.message), meta: trimsawMeta(m.meta) }) };
   if (kind === "trimsawCalibration" || kind === "trimsawCalibrationMetrics")
     return { at, ...pick(m, ["state", "requestId", "message"]), calibration: calibrationSummary(m.calibration) };
   if (kind === "model") return { at, ...pick(m, ["state", "requestId", "message"]), ...(m.meta ? { meta: flat(m.meta, 8) } : {}) };

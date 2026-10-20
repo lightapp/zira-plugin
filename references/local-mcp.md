@@ -14,7 +14,9 @@ For `node ../../scripts/browse.mjs sites --company-id 123`, call `inventory` wit
 
 The host may prefix tool names, for example `mcp__zira__inventory`. Discover the tools of this
 plugin's local server; do not substitute the separate remote Zira connector. If the server is absent
-or fails to start, report the installation problem; do not silently fall back to shell execution.
+or fails to start, follow “If Zira's tools are missing” in [setup help](setup-help.md) and fix it with
+the user in plain words (wrong app or tab, missing Node.js, new session needed); do not silently fall
+back to shell execution or to clicking through Zira in a browser.
 The standalone legacy health-report skill archive is a CLI-only artifact, not this MCP plugin.
 
 | Helper in the existing recipe | Local MCP tool |

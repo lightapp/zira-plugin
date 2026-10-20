@@ -9,8 +9,9 @@ hook, mod or native side-panel command. All packaged action scripts are invoked 
 the server reuses the existing Node/Python tools on this computer. No remote MCP hosting is
 required. The full Git package at the repository root retains the optional Claude panels.
 
-Requires Claude Code, Node.js 20+ and the user's approval to connect the local MCP server.
-No npm install is needed. Image/model analysis can install its dedicated pinned Python
+Requires Claude Code (in a terminal, or the Code tab of the Claude desktop app; not Chat or
+Cowork), Node.js 20+ and the user's approval to connect the local MCP server. If Node.js is
+missing, the Get Started skill walks the user through installing it. No npm install is needed. Image/model analysis can install its dedicated pinned Python
 environment after consent. Start with “Help me get started with Zira.” An ordinary web chat
 without a local executor cannot run this package. This candidate is not yet directory-approved.
 

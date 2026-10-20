@@ -43,8 +43,21 @@ const pick = (v, keys) => Object.fromEntries(keys.filter(k => v && ["number", "b
   .map(k => [k, typeof v[k] === "string" ? v[k].slice(0, 128) : v[k]]));
 const rows = v => Array.isArray(v) ? v.slice(0, 32) : [];
 const distribution = v => pick(v, ["mean", "median", "p10", "p90"]);
+// A geometry measuring far ends from an observed blade line carries it (Vision-App 3df52081+).
 const geometry = v => ({ ...pick(v, ["usable", "angleDeg", "bandUnits", "scaleUnitsPerPx", "sawPositionPx", "agreementUnits"]),
+  ...(object(v?.bladeLine) ? { bladeLine: pick(v.bladeLine, ["positionPx", "boards", "stops", "beyondDerivedSawPx", "doubtful"]) } : {}),
   stops: rows(v?.stops).map(s => pick(s, ["stopId", "positionPx", "calibrationSize", "jigSize"])) });
+// Read-only: where this camera samples a board's stop end (raw CountLines, the global line, Radius and
+// the deskew), so stops collected on another phone can be compared before they are trusted.
+const COUNT_LINES_MAX = 2000;
+const sampling = v => {
+  const out = pick(v, ["lineStartX", "lineStartY", "lineEndX", "lineEndY", "radius", "analysisRotationDegrees"]);
+  if (typeof v.countLines === "string") {
+    out.countLines = v.countLines.slice(0, COUNT_LINES_MAX);
+    if (v.countLines.length > COUNT_LINES_MAX) out.countLinesTruncated = true;
+  }
+  return out;
+};
 const statistics = v => ({ ...pick(v, ["usable", "unmatchedCount", "noCutCount"]),
   stops: rows(v?.stops).map(s => ({ ...pick(s, ["stopId", "jigSize", "count", "cutCount"]),
     pre: distribution(s.pre), post: distribution(s.post), cutPost: distribution(s.cutPost), endpointPx: distribution(s.endpointPx) })) });
@@ -53,6 +66,7 @@ export function calibrationSummary(v) {
   const out = pick(v, ["schemaVersion", "supported", "revision", "busy", "frameSizePx", "axis", "unitOfMeasure", "stopEnd", "enabled",
     "physicalAccuracyValidated", "previewInvalidated", "previewId", "expiresAtUtcMs", "sawAnchorPx", "sawTolerancePx", "canApply", "applied"]);
   for (const key of ["current", "proposed", "rollback"]) if (object(v[key])) out[key] = geometry(v[key]);
+  if (object(v.sampling)) out.sampling = sampling(v.sampling);
   if (Array.isArray(v.refusals)) out.refusals = v.refusals.slice(0, 40).filter(x => typeof x === "string").map(x => x.slice(0, 300));
   if (object(v.comparison)) out.comparison = { ...pick(v.comparison, ["sampleCount", "measurement", "physicalAccuracyValidated", "changedTargetCount", "changedCutDecisionCount", "fromUtcMs", "toUtcMs"]),
     current: statistics(v.comparison.current), proposed: statistics(v.comparison.proposed) };

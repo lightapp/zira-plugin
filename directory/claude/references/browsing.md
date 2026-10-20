@@ -1,6 +1,6 @@
 # Authorized inventory browsing
 
-Check [prerequisites and build identity](distribution.md) first. Public builds permit only `prod`; a local client, Node.js 20+ and account/site permissions are required.
+Check [prerequisites and build identity](distribution.md) first. Public builds permit only `prod`; a local client, Node.js 20+ and account/site permissions are required. If the Zira tools are missing, follow [setup help](setup-help.md).
 
 The helpers ship inside the Zira plugin and require Node.js 20+. Resolve the commands below from the invoking skill directory (the folder containing its SKILL.md), not this reference file or a repository checkout.
 

@@ -1,0 +1,7 @@
+{
+  "systemMessage": "Zira needs one more thing before it can work: a free helper program called Node.js. Say \"set up Zira\" and Claude will set it up with you. No typing commands.",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "Node.js is not installed on this computer (or could not start), so the Zira plugin's tools are unavailable in this session. When the user says \"set up Zira\" or asks for anything Zira, use the zira:getting-started skill and follow its setup guide (references/setup-help.md) to install Node.js with them first, in plain words. Do not click through Zira in a web browser as a substitute unless the user asks for that."
+  }
+}

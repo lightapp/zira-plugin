@@ -3,6 +3,9 @@
 Use a local Codex or Claude Code session with filesystem and shell access and Node.js 20+.
 Ordinary chat without a local execution environment can explain workflows but cannot run these
 scripts or the browser sign-in callback. No npm install is needed for the Node.js helpers.
+Most users are not technical: [setup help](setup-help.md) is the plain-language guide to which app
+or tab to use (the Claude desktop app's Code tab, not Chat or Cowork), installing Node.js for them,
+first-time Allow and sign-in prompts, and what to do when Zira's tools are missing.
 
 Before starting, run `node scripts/build-info.mjs` from the loaded plugin root. From a skill,
 use `node ../../scripts/build-info.mjs`. Report the version, channel, audience and source commit;
@@ -16,7 +19,7 @@ security, licensing and directory checks are complete. These candidates are for 
 
 | Feature | Required setup | If unavailable |
 | --- | --- | --- |
-| Zira account data and actions | Node.js 20+, browser sign-in with your own account, authorized company/site/action access | Run Health Report `auth status` then `auth login`; for a denied route explain the denial and use the supported Zira web page. Installation grants no new permissions. |
+| Zira account data and actions | Node.js 20+, browser sign-in with your own account, authorized company/site/action access | Missing Node.js or Zira tools: follow [setup help](setup-help.md). Sign-in: run Health Report `auth status` then `auth login`; for a denied route explain the denial and use the supported Zira web page. Installation grants no new permissions. |
 | Model evaluation, subsets and rare-defect review | Local Python 3.10+, the feature's separate pinned environment, supplied local files or permission to download Zira files | Run Evaluate a Model `status` first. Ask before `setup` downloads packages. Public builds support `.tflite`; `.pt` is not released. |
 | Inspect Nail Images | Local images with nail regions; Python 3.10+ (3.12 tested); separate pinned OpenCV/NumPy environment | Run the skill's `node scripts/runtime.mjs status`, then explicitly requested `setup --python PATH`. The tool/assets are bundled. No private GitHub or Zira account is needed for offline analysis. |
 | Scheduled reports | A supported host scheduler and a computer available at run time, plus report permissions | Follow the scheduling reference; explain the host, how to inspect/stop jobs and that installation creates no jobs. |
@@ -25,7 +28,8 @@ security, licensing and directory checks are complete. These candidates are for 
 Internal developer builds include one additional private development skill and allow the integration
 environment and explicitly enabled panel refresh. Those capabilities are absent or disabled in
 public builds. A public preview has the same restrictions as a public stable package.
-Dependencies and account access are checked when relevant; never silently install software or
+Dependencies and account access are checked when relevant; never install software without the
+user's agreement (setup help describes how to install Node.js for them once they agree) or
 substitute a different environment to get around a denial. Keep credentials, reports, schedules,
 review decisions and Python environments outside the replaceable plugin directory.
 

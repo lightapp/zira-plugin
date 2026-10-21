@@ -84,6 +84,32 @@ Base aggregation: `{id,metric,operator,name,color,timeSeriesChartType,hide,yAxis
 
 Series display: `hide:"on"` shows it, `"hide"` keeps a disabled legend entry, `"off"` hides helper series but retains them for formulas. `yAxis` is a zero-based index. `timeSeriesChartType:"5"` line or `"2"` column applies only to column/time-series charts. Omit it on pie, bar and KPI/table widgets: a series override can turn the whole presentation into columns. Use consistent hex colors such as blue `#1976d2`, green `#388e3c`, amber `#fbc02d`, red `#d32f2f`, purple `#7b1fa2`.
 
+### Column and bar categories come from the first visible series
+
+Seen in the browser on 2026-10-21: a column or bar chart (`chartType` `2` or `4`) with several
+base aggregations draws **only the categories where the first visible aggregation has rows**.
+Categories where only later series have rows are dropped without any error. When the first
+series has no rows at all, the chart reads "Data ranges from 0 to 0". A first aggregation with
+`hide:"off"` does not carry categories; the next visible one decides. For example, a cut-length
+histogram with series Stop 30, Stop 40 and Stop 45 grouped by `roundTo(POST, 0.1)` shows only
+the bins around 30. A Cut series first drops every stop or length bin that has only uncut boards.
+
+Order series so that the first visible one covers every category:
+
+- **All, then subsets overlaid.** First series: all boards, with no series filter. Later series:
+  a subset such as Uncut, with `stacking:"3"` (overlap). The visible remainder of the first bar
+  is everything outside the subset; say so in the description. Verified for one overlaid subset.
+- **One series per text band, dominant band first.** For a composition by category, such as
+  distance bands per stop with `stacking:"2"` (percent), put the band present in every category
+  first. A category with no rows in that band still disappears, so check it in the browser.
+- **One series.** A histogram does not need a per-category split to show the shape.
+
+`save` returns a `first_series_categories` warning when a later visible series has filters the
+first one does not have, so it can keep rows outside the first series. The check compares series
+filters only; it cannot see which categories have data. Fix the order, or confirm in the browser
+that the first series has rows in every category. A warning never blocks the save. Time series
+(`5`), pie and KPI widgets are not checked; this behavior was observed only on column/bar charts.
+
 ## Filters
 
 ```json
@@ -108,11 +134,17 @@ Derived field: `{id:"D_0123abcd",name:"Length bin",exp:"roundTo(m123, 0.5)",data
 - `clamp(value,min,max)` and `text(a,b,...)`. Use `text`, not `+`, for joining numbers and text.
 - Ternaries, arithmetic, comparisons and common math helpers. Check missing inputs explicitly when another referenced input can be present. Failed expressions produce null; that is not a zero.
 
+Group by a numeric derived field only when its values cannot be negative. On 2026-10-21 a chart
+grouped by `roundTo(mLEN - mTARGET, 0.1)` rendered nothing at all. Text band labels from a derived
+field work, both in `groupBy` and as the `metric` of an aggregation filter (operator `1`, the
+label as `filterValue`). Prefix labels with their order (`1 Short > 0.5`, `2 Short 0.25-0.5`,
+`3 Within 0.25` …) so legends and sorting follow the bands rather than the alphabet.
+
 Calculated series: `{id:"C_0123abcd",name:"Rate %",exp:"A_0123abcd > 0 ? 100 * A_89abcdef / A_0123abcd : 0",displayExp:"...same expression...",hide:"on",yAxis:0}` plus optional color/display type. References must be existing aggregation IDs or earlier custom IDs. State zero-denominator behavior; a zero fallback can be mistaken for a real zero, so pair with sample counts. Derived fields answer row-level questions; custom series answer questions about grouped summaries.
 
 ## Supporting widgets
 
-- `aiSummary`: a question over explicitly selected analytical widgets; see [AI summary settings and payload](ai-summary.md). This uses the native AI Insights `filters` envelope, not analytical settings. Creation does not run or schedule AI. Backend admission must support type 18.
+- `aiSummary`: a question over explicitly selected analytical widgets; see [AI summary settings and payload](ai-summary.md). This uses the native AI Insights `filters` envelope, not analytical settings. Creation does not run or schedule AI. Backend admission must support type 18. The generated answer receives KPI values, but only placeholders for grouped charts and KPI tables.
 
 - `header`: `name,description,fontSize` (1 small, 2 medium, 3 large), `isCenterHeader`. The current header renderer shows only `name` on one unwrapped line; description is stored but not visible there. Keep the name short and put analytical caveats in chart descriptions. Stored as type `6`, empty `components`, `uiSettings:{fontSize,isCenterHeader,description}`.
 - `filter`: `name,description,hideHeader,displayType` (`toggles|dropdown|radio`), `interactionMode` (`inline|quick-filter|mixed`), `quickFilterSelectionMode` (`single|multiple`), `filtersList:[{id,name,isActive?,isDefaultActive?,isHideValue?,interactionMode?,filters}]`, `widgetsTargetKeys:[local keys]`. Stored as type `20`, component/argument type `10`; targets become `widgetsList:[{id,name}]` after target creation. Targets must be analytical/readings widgets in the same draft. Each item can use `inline` (editable condition, initially active) or `quick-filter` (toggle a saved condition, starts from `isDefaultActive`). Use `quick-filter` for mutually exclusive saved stop choices; old `isActive:false` alone does not disable inline conditions. `mixed` describes a widget with both item modes. Don't start incompatible choices active. Current quick-filter buttons scroll horizontally on narrow screens; legacy `displayType` does not turn them into a dropdown. Verify every choice remains reachable.

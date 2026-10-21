@@ -45,8 +45,10 @@ it reuses that skill's API helpers. The result is a saved Zira dashboard, not a 
    browser. For **each source**, compare a total, cut/uncut share, weighted stop mean and length
    distribution with independent readings for identical site-time bounds and filters. Exercise
    its stop filter and check other source sections remain unchanged. Check a narrower populated
-   range, an empty range and a mobile layout. Verify the AI answer uses the selected source/range
-   and states uncertainty; a saved question alone is not a verified generated summary. Return the
+   range, an empty range and a mobile layout. Check that every recorded stop and length bin
+   appears in each column/bar chart (they draw only their first visible series' categories).
+   Verify the AI answer uses the selected source/range, quotes only its KPI values and states
+   uncertainty; a saved question alone is not a verified generated summary. Return the
    dashboard link, selected source names, time basis, units and validation status. State any
    omitted neighbor pairs or incomplete widgets explicitly.
 

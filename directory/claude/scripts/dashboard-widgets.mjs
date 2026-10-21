@@ -195,6 +195,28 @@ export function validateSpec(spec, ctx) {
   return normalized;
 }
 
+// A column/bar chart draws only the categories where its first visible series has rows; a
+// hide:"off" helper does not count (seen in the browser 2026-10-21). Series filters are the
+// only population difference visible here, so warn when a later series keeps rows outside the
+// first one's filters. Warnings never block a save.
+const filterGroups = filters => new Set((filters ?? []).map(group => JSON.stringify(group.map(({ id: _, ...f }) => JSON.stringify(canonical(f))).sort())));
+export function seriesWarnings(widgets) {
+  const warnings = [];
+  for (const w of widgets) {
+    const s = w.settings;
+    if (w.type !== 'dataResearch' || !['2','4'].includes(s.chartType)) continue;
+    const shown = s.aggregations.filter(a => a.hide !== 'off');
+    if (shown.length < 2) continue;
+    const first = filterGroups(shown[0].filters), label = a => a.name ?? a.id;
+    const outside = shown.slice(1).filter(a => { const groups = filterGroups(a.filters); return [...first].some(g => !groups.has(g)); });
+    if (!outside.length) continue;
+    const helper = s.aggregations[0] !== shown[0] ? ' Hidden helper series (hide "off") do not carry categories.' : '';
+    warnings.push({ key:w.key, name:s.name, code:'first_series_categories', firstSeries:label(shown[0]), series:outside.map(label),
+      message:`"${s.name}" shows only the categories where its first visible series "${label(shown[0])}" has rows. ${outside.map(a => `"${label(a)}"`).join(', ')} can have rows outside its filters, so those categories may be missing.${helper} Put a visible series that covers every category first (for example all boards, with subsets overlaid using stacking "3"), or check in the browser that "${label(shown[0])}" has rows in every category.` });
+  }
+  return warnings;
+}
+
 export function payload(w, ctx, mapping = {}) {
   const s = structuredClone(w.settings), [typeId, typeName] = TYPES[w.type];
   const old = w.widgetId ? ctx.dashboard.widgets.find(x => String(x.id) === w.widgetId) : null;
@@ -275,11 +297,11 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
     if (['pending','partial'].includes(stored?.actions?.[key]?.state)) throw new Blocked('uncertain_write', 'An earlier attempt is pending or partial. Inspect its receipt and dashboard; do not replay the batch.', { receipt: stored.actions[key], url:ctx.url });
   }
   if (expected && expected !== ctx.revision) throw new Blocked('conflict', 'Dashboard changed since the preview. Read context and review a fresh preview.');
-  const widgets = validateSpec(spec, ctx);
+  const widgets = validateSpec(spec, ctx), warnings = seriesWarnings(widgets);
   const mapping = Object.fromEntries(widgets.map(w => [w.key, { id:w.widgetId ?? w.key, name:w.settings.name }]));
   const planned = widgets.map(w => ({ key:w.key, action:w.widgetId ? 'update' : 'create', widgetId:w.widgetId, payload:payload(w, ctx, mapping) }));
   const plannedLayout = layoutFor(widgets, ctx.dashboard, mapping);
-  const preview = { kind:'dashboard-widgets-preview', url:ctx.url, revision:ctx.revision, widgets:planned, configurationLayout:plannedLayout, notifications:false, applied:false };
+  const preview = { kind:'dashboard-widgets-preview', url:ctx.url, revision:ctx.revision, warnings, widgets:planned, configurationLayout:plannedLayout, notifications:false, applied:false };
   if (!apply) return preview;
   assert(expected, '--expected REVISION from a reviewed preview is required with --apply');
   const outcome = await guardedWrite({ file:receipts, key, summary:{ kind:'dashboard-widgets', dashboardId, siteId, widgetCount:widgets.length }, links:() => ({ url:ctx.url }),
@@ -308,7 +330,7 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
       return { verified:!mismatches.length && layoutVerified, mismatches, layoutVerified, receipt:{ dashboardId, mapping }, mapping };
     },
   });
-  return { kind:'dashboard-widgets', ...outcome, state:outcome.state === 'created' ? outcome.verified ? 'created' : 'unverified' : outcome.state, applied:outcome.state === 'created', url:ctx.url, note:'Saved configuration read-back is separate from data/render verification. Open the dashboard and compare values with scoped readings.' };
+  return { kind:'dashboard-widgets', ...outcome, state:outcome.state === 'created' ? outcome.verified ? 'created' : 'unverified' : outcome.state, applied:outcome.state === 'created', url:ctx.url, warnings, note:'Saved configuration read-back is separate from data/render verification. Open the dashboard and compare values with scoped readings.' };
 }
 
 const HELP = `Native Zira widgets — preview by default; no deletion or device changes.
@@ -320,6 +342,7 @@ Spec: {version:1, widgets:[{key,type,settings,widgetId?,layout?}]}.
 Types: dataResearch (KPI/grouped KPI/table/column/bar/pie/time series), header, filter, readings, aiSummary.
 aiSummary stores a question and selected analytical widgets; it does not run AI or schedule reports.
 context reads metric schemas and saved widgets; save validates and previews exact payload/layout.
+Preview warnings (first_series_categories) flag column/bar charts that may drop categories.
 --apply saves once with receipt and read-back. Partial/unknown writes stop; never replay a batch.
 JSON stdout; errors stderr. Exit 0 success, 2 invalid/failed, 3 unverified, 4 blocked.
 `;
@@ -336,7 +359,7 @@ async function main() {
     assert(o.spec, '--spec required'); const raw = await readFile(o.spec, 'utf8'); assert(raw.length <= 256*1024, 'Spec exceeds 256 KiB');
     result = await author({ ...options, spec:JSON.parse(raw), apply:!!o.apply, expected:o.expected, receipts:receiptsFile(o.receipts) });
   }
-  if (o.out) { await writeFile(o.out, JSON.stringify(result,null,2), { mode:0o600 }); return { kind:result.kind, out:o.out, revision:result.revision, url:result.url, state:result.state, applied:result.applied, verified:result.verified, complete:result.complete }; }
+  if (o.out) { await writeFile(o.out, JSON.stringify(result,null,2), { mode:0o600 }); return { kind:result.kind, out:o.out, revision:result.revision, url:result.url, state:result.state, applied:result.applied, verified:result.verified, complete:result.complete, warnings:result.warnings }; }
   return result;
 }
 if (isMain(import.meta)) runCli(main, { profile:() => process.argv.includes('integ') ? 'integ' : 'prod' });

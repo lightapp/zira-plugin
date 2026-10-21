@@ -48,6 +48,21 @@ Unknown, foreign, recursive and duplicate sources are rejected before any write.
 | `answerExample` | Optional saved example, up to 32,000 characters; defaults to empty. The current dashboard renderer does not use it in the generation call. Never store invented production results as an example |
 | `fontSize` | Text multiplier, 0.5–3 in 0.1 steps; defaults to 1 |
 
+## What the generated answer can see
+
+Checked in the browser on 2026-10-21: the answer received the values of KPI widgets
+(`chartType` `6`), but grouped charts and KPI tables reached it only as placeholders, even after
+**Generate Answer**. It cannot read a distribution, a per-category bar or a table row, so it
+cannot judge per-stop or per-category results from those widgets. Selecting them adds no values.
+
+- Put every number the answer must discuss in a KPI widget and select those KPIs.
+- For a few per-category facts, add ungrouped KPIs filtered to that category. Don't try to
+  rebuild a whole chart this way.
+- Ask only about what the KPIs carry, and have the answer send readers to the named charts for
+  distributions and category detail rather than describing them.
+- Read the generated answer before calling the summary verified. Re-check this limitation when
+  Zira changes the renderer.
+
 Draft the question from the actual decision and source capabilities. Include confirmed units,
 weighting, time basis and important limitations where needed. Comparisons and drill-down styles
 do not supply missing baseline/detail data. For length/inventory questions, observed incoming and

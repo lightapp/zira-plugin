@@ -227,11 +227,12 @@ const rowsOf = (v, keys, max = 32) => (Array.isArray(v) ? v.slice(0, max).map(x 
 const TRIMSAW_KEYS = ["flow", "collecting", "boardCount", "newBoardCount", "stopSide", "stopEnd", "axis", "enabled", "path", "misconfigured",
   "appliedStopCount", "capturedStopCount", "analysisRotationDegrees", "assigningSizes", "deferredRun", "assignedStopCount", "allStopsAssigned",
   "usable", "canApply", "confidentBoardMinimum", "unlabelledConfidentCount", "unlabelledLowConfidenceCount",
-  "appliedRevision", "lineEditSupported", "installSupported", "installRevertAvailable", "separateJigSizeSupported"];
+  "appliedRevision", "lineEditSupported", "installSupported", "installRevertAvailable", "separateJigSizeSupported",
+  "settingsUploadSupported", "settingsUploadAuto"];
 export function trimsawMeta(m) {
   if (!m || typeof m !== "object" || Array.isArray(m)) return undefined;
   const obj = v => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
-  const blade = obj(m.bladeLine), edit = obj(m.lineEdit), undo = obj(m.undo);
+  const blade = obj(m.bladeLine), edit = obj(m.lineEdit), undo = obj(m.undo), upload = obj(m.settingsUpload);
   return defined({
     ...pick(m, TRIMSAW_KEYS), summary: text(m.summary), refusal: text(m.refusal), warnings: texts(m.warnings),
     stops: rowsOf(m.stops, ["index", "pos", "observedBoards", "size", "jigSize", "calibrationSize", "suggested", "lowConfidence", "keptPosition", "existing", "appliedPos"]),
@@ -244,6 +245,9 @@ export function trimsawMeta(m) {
       stops: rowsOf(edit.stops, ["pos", "jigSize", "calibrationSize", "change", "fromIndex", "fromPos", "fromJigSize"]),
       removed: rowsOf(edit.removed, ["index", "pos", "jigSize"]) }) : undefined,
     undo: undo ? defined({ ...pick(undo, ["available", "kind", "atUtcMs"]), summary: text(undo.summary) }) : undefined,
+    // Zira's stored copy: the camera's last save of its trim saw entries (Vision-App after 851).
+    settingsUpload: upload ? defined({ ...pick(upload, ["state", "trigger", "atUtcMs", "mode", "verified"]),
+      changedKeys: texts(upload.changedKeys), message: text(upload.message) }) : undefined,
     collection: flat(m.collection, 10),
   });
 }

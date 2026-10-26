@@ -5,9 +5,10 @@ accepted into a dataset.
 `scan` runs a model that knows the defect class at a low confidence over every slice of a prepared
 nails dataset (usually QA session frames, see evaluate-model's session_datasets.py) and ranks the
 candidates: model score first, slices a reviewer marked as a nails defect raised, and boxes a reviewer
-already labeled as the defect kept aside as known examples. `export` reads the review decisions and
-writes the accepted slices, with every other nail labeled as in the reference, as a YOLO dataset.
-Nothing is sent to Zira.
+already labeled as the defect kept aside as known examples. The model's other detections where nothing
+is labeled are kept too, so a reviewer can mark a nail the camera missed; `others` adds them to an
+earlier run. `export` reads the review decisions and writes the accepted slices, with every other nail
+labeled as in the reference, as a YOLO dataset. Nothing is sent to Zira.
 """
 
 from __future__ import annotations
@@ -24,12 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evaluate-model" / "scripts"))
 
-from model_evaluation import EvalError, box_iou, file_sha256, load_dataset, read_labels, read_reference  # noqa: E402
+from model_evaluation import EvalError, box_iou, file_sha256, load_dataset, read_labels, read_reference, match_boxes, rates  # noqa: E402
 
 RUN_FORMAT = "zira.defect-candidates"
 EXPORT_FORMAT = "zira.defect-dataset"
 REJECT, SKIP = "reject", "skip"  # "skip" is the reviewer's "unsure": left out of training, listed for a second look
 OVERLAP = 0.3  # a candidate on a reference box relabels that box instead of adding one
+OTHERS_CONFIDENCE = 0.25  # the model's other detections offered for marking; fainter ones are mostly noise
 EXIT_OK, EXIT_INVALID = 0, 2
 
 
@@ -43,6 +45,22 @@ def is_defect_mark(category: str) -> bool:
 
 # ---------------------------------------------------------------- scan
 
+def others_of(predicted: list[dict], target_ids, classes: list[str], truth: list[dict], candidates: list[dict],
+              confidence: float = OTHERS_CONFIDENCE) -> list[dict]:
+    """The model's detections of other classes where nothing is labeled or suggested yet, strongest first,
+    so a reviewer can mark them too (a nail the camera missed may be the defect)."""
+    taken, others = list(truth) + list(candidates), []
+    for b in sorted(predicted, key=lambda b: -b["score"]):
+        if b["classId"] in target_ids or b["classId"] >= len(classes) or b["score"] < confidence:
+            continue
+        if any(box_iou(b, t) >= OVERLAP for t in taken):
+            continue
+        other = {**box(b), "score": round(float(b["score"]), 4), "class": classes[b["classId"]]}
+        others.append(other)
+        taken.append(other)
+    return others
+
+
 def classes_of(target) -> list[str]:
     """One class or several ("raisedNail,protrudeNail"), in order, without repeats."""
     raw = target if isinstance(target, (list, tuple)) else str(target or "").split(",")
@@ -51,7 +69,7 @@ def classes_of(target) -> list[str]:
 
 def scan(dataset: str, model_path: str, target, model_classes: list[str] | None = None, confidence: float = 0.05,
          nms_iou: float = 0.45, limit: int | None = None, threads: int = 4, frames_root: str | None = None,
-         load_model=None, progress=None, cancelled=lambda: False, data_source_id: str | None = None) -> dict:
+         load_model=None, progress=None, cancelled=lambda: False, data_source_id: str | None = None, device: str = "cpu") -> dict:
     started = time.perf_counter()
     progress = progress or (lambda *a, **k: None)
     data = load_dataset(Path(dataset), "all", limit)
@@ -62,7 +80,7 @@ def scan(dataset: str, model_path: str, target, model_classes: list[str] | None 
     if load_model is None:
         import backends
         load_model = backends.load_model
-    model = load_model(path, threads=threads, device="cpu")
+    model = load_model(path, threads=threads, device=device)
     classes = model.class_names or model_classes
     if not classes:
         raise EvalError("the model file has no class names; pass --model-classes with the classes Zira recorded")
@@ -77,16 +95,31 @@ def scan(dataset: str, model_path: str, target, model_classes: list[str] | None 
     reference = read_reference(data.root) or {}
     slice_meta = reference.get("slices", {})
 
-    items, scanned = [], 0
+    items, comparison_items, scanned = [], [], 0
+    scores, invalid_labels = {}, 0
+    fingerprint = hashlib.sha256(json.dumps(names, separators=(",", ":")).encode())
     progress("start", total=len(data.items), model=path.name, target=", ".join(targets))
     for index, item in enumerate(data.items, 1):
         if cancelled():
             progress("cancelled", done=index - 1, total=len(data.items))
             break
         scanned += 1
-        truth, _ = read_labels(item.label, len(names))
+        truth, problems = read_labels(item.label, len(names))
+        invalid_labels += bool(problems)
         known = [i for i, t in enumerate(truth) if t["classId"] in data_ids]
-        found = [b for b in model.predict(item.image, confidence=confidence, nms_iou=nms_iou).boxes if b["classId"] in model_ids]
+        predicted = model.predict(item.image, confidence=min(confidence, OTHERS_CONFIDENCE), nms_iou=nms_iou).boxes
+        found = [b for b in predicted if b["classId"] in model_ids and b["score"] >= confidence]
+        source = reference.get("images", {}).get(item.name, "unknown") if reference else "dataset"
+        fingerprint.update(json.dumps([item.name, file_sha256(item.image), truth, source, problems], sort_keys=True, separators=(",", ":")).encode())
+        if not problems:
+            table = scores.setdefault(source, {target: [0, 0, 0] for target in targets if target in names})
+            for target, counts in table.items():
+                expected = [t for t in truth if names[t["classId"]] == target]
+                matched_predictions = [{**p, "classId": names.index(target)} for p in found if model_ids[p["classId"]] == target]
+                matched = len(match_boxes(expected, matched_predictions, 0.5))
+                for metric_index, amount in enumerate((matched, len(matched_predictions) - matched, len(expected) - matched)):
+                    counts[metric_index] += amount
+        comparison_items.append({"image": item.name, "predictions": [{**box(b), "score": round(float(b["score"]), 4), "class": model_ids[b["classId"]]} for b in found]})
         meta = slice_meta.get(item.name, {})
         marks = [m for m in meta.get("marks", []) if isinstance(m, str)]
         candidates = []
@@ -105,11 +138,12 @@ def scan(dataset: str, model_path: str, target, model_classes: list[str] | None 
         top = candidates[0]["score"] if candidates else 0.0
         items.append({
             "image": item.name, "split": item.split,
-            **{k: meta[k] for k in ("frame", "session", "crop", "scale", "pad", "content") if k in meta},
+            **{k: meta[k] for k in ("id", "frame", "session", "crop", "scale", "pad", "content") if k in meta},
             **({"labelSource": reference.get("images", {}).get(item.name)} if reference else {}),
             "marks": marks, "known": len(known),
             "truth": [{"classId": t["classId"], **box(t)} for t in truth],
             "candidates": candidates,
+            "others": others_of(predicted, model_ids, classes, truth, candidates),
             # The model's confidence leads; a reviewer's "nails defect" mark lifts a slice for a look.
             "rank": round(top + (0.3 if defect_marked else 0.0), 4),
         })
@@ -125,20 +159,62 @@ def scan(dataset: str, model_path: str, target, model_classes: list[str] | None 
         "target": targets[0], "targets": targets,
         **({"dataSourceId": str(data_source_id)} if data_source_id else {}),
         "dataset": {"path": str(data.root), "name": Path(dataset).name, "classNames": names, "slices": len(data.items),
-                    "scanned": scanned, **({"sessions": reference.get("sessions", [])} if reference else {})},
+                    "scanned": scanned, "fingerprint": fingerprint.hexdigest(), **({"sessions": reference.get("sessions", [])} if reference else {})},
         # QA session slices carry the device's own detections (or a reviewer's correction); a dataset
         # version carries what annotators drew.
         "labelsFrom": "sessions" if reference else "dataset",
         **({"framesRoot": str(Path(frames_root).expanduser().resolve())} if frames_root else {}),
         "model": {"path": str(path), "name": path.name, "sha256": file_sha256(path), "classNames": classes},
-        "settings": {"confidence": confidence, "nmsIou": nms_iou, "overlap": OVERLAP},
+        "settings": {"confidence": confidence, "nmsIou": nms_iou, "overlap": OVERLAP, "othersConfidence": OTHERS_CONFIDENCE},
         "totals": {"toReview": len(review), "candidateBoxes": sum(len(i["candidates"]) for i in review),
                    "markedSlices": sum(1 for i in items if any(is_defect_mark(m) for m in i["marks"])),
                    "knownSlices": len([i for i in items if i["known"]]), "knownBoxes": sum(i["known"] for i in items)},
         "elapsedSeconds": round(time.perf_counter() - started, 2),
+        "comparisonMetrics": {"matchIou": 0.5, "invalidLabelImages": invalid_labels,
+                              "unavailableClasses": [t for t in targets if t not in names],
+                              "bySource": {source: {target: rates(*counts) for target, counts in table.items()} for source, table in scores.items()},
+                              "note": "Reference agreement at the scan threshold. Device/unknown labels are unverified; reviewer corrections may be incomplete. These are not independent holdout accuracy claims."},
+        "comparisonItems": comparison_items,
         "review": review,
         "knownItems": known_items,
     }
+
+
+def add_others(run_dir: str, load_model=None, threads: int = 4, confidence: float = OTHERS_CONFIDENCE, progress=None) -> dict:
+    """Adds the model's other detections to an earlier run's review slices. Candidates, their order and
+    the decisions stay as they are; only each slice's `others` list is (re)written."""
+    progress = progress or (lambda *a, **k: None)
+    run_path = Path(run_dir).expanduser().resolve()
+    file = run_path / "candidates.json"
+    run = json.loads(file.read_text())
+    if run.get("format") != RUN_FORMAT:
+        raise EvalError(f"{run_path} is not a find-defects run")
+    model_path = Path(run["model"]["path"])
+    if not model_path.is_file():
+        raise EvalError(f"the run's model file is no longer there: {model_path}")
+    if load_model is None:
+        import backends
+        load_model = backends.load_model
+    model = load_model(model_path, threads=threads, device="cpu")
+    classes, targets = run["model"]["classNames"], run.get("targets") or [run["target"]]
+    target_ids = {classes.index(t) for t in targets if t in classes}
+    root, settings = Path(run["dataset"]["path"]).resolve(), run.setdefault("settings", {})
+    review = run.get("review", [])
+    progress("start", total=len(review), model=model_path.name, target="other detections")
+    for index, item in enumerate(review, 1):
+        image = (root / item["image"]).resolve()
+        if not image.is_relative_to(root) or not image.is_file():
+            raise EvalError(f"slice image missing: {item['image']}")
+        predicted = model.predict(image, confidence=confidence, nms_iou=settings.get("nmsIou", 0.45)).boxes
+        item["others"] = others_of(predicted, target_ids, classes, item["truth"], item["candidates"], confidence)
+        if index % 100 == 0 or index == len(review):
+            progress("slice", done=index, total=len(review))
+    settings["othersConfidence"] = confidence
+    partial = file.with_name(file.name + ".partial")
+    partial.write_text(json.dumps(run, separators=(",", ":")))
+    os.replace(partial, file)
+    return {"kind": "zira.defect-others", "run": str(run_path), "slices": len(review),
+            "otherBoxes": sum(len(i["others"]) for i in review), "confidence": confidence}
 
 
 # ---------------------------------------------------------------- export
@@ -156,8 +232,9 @@ def read_decisions(path: Path) -> dict:
 
 def labelled(item: dict, choices: dict, names: list[str], targets: list[str]) -> tuple[list[dict], bool, bool]:
     """The slice's reference boxes with the reviewer's choices applied. Keys are candidate indexes
-    ("0") or reference box indexes ("r0"). A candidate on a reference box relabels that box, otherwise
-    it is added; a reference box is relabeled in place; a rejected candidate changes nothing."""
+    ("0"), reference box indexes ("r0") or the model's other detections ("m0"). A candidate on a
+    reference box relabels that box, otherwise it is added; a reference box is relabeled in place; a
+    marked other detection is added; a rejected box changes nothing."""
     boxes = [dict(t) for t in item["truth"]]
     accepted = changed = False
     for key, label in sorted(choices.items()):
@@ -173,6 +250,8 @@ def labelled(item: dict, choices: dict, names: list[str], targets: list[str]) ->
                 boxes[candidate["referenceIndex"]]["classId"] = class_id
             else:
                 boxes.append({"classId": class_id, **{k: candidate[k] for k in ("x", "y", "w", "h")}})
+        elif key.startswith("m") and key[1:].isdigit() and int(key[1:]) < len(item.get("others", [])):
+            boxes.append({"classId": class_id, **{k: item["others"][int(key[1:])][k] for k in ("x", "y", "w", "h")}})
         else:
             continue
         accepted = accepted or label in targets
@@ -275,7 +354,7 @@ def export(run_dir: str, out: str, name: str, decisions_file: str | None = None,
                 "whole": whole, **({"unsureLeftOut": unsure} if unsure else {}),
                 "source": {"run": str(run_path), "dataset": str(root), "sessions": run["dataset"].get("sessions", []),
                            "model": run["model"]["name"], "modelSha256": run["model"]["sha256"]},
-                "note": "Accepted slices keep every other nail as labeled in the reference (reviewer correction or device output)."}
+                "note": "Accepted images keep all other reference labels (reviewer correction or device output)."}
     (stage / "defects-manifest.json").write_text(json.dumps(manifest, indent=2))
     if final.exists():
         shutil.rmtree(final)
@@ -309,10 +388,16 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--confidence", type=float, default=0.05, help="lowest score kept (default 0.05: find more, review decides)")
     s.add_argument("--limit", type=int, help="scan only the first N slices")
     s.add_argument("--threads", type=int, default=4)
+    s.add_argument("--device", default="cpu", choices=["cpu", "mps"], help=".pt models only: cpu, or mps for an Apple GPU (default cpu)")
     s.add_argument("--frames-root", help="folder of the session frames, for showing a slice on its pallet")
     s.add_argument("--device-id", help="the Zira data source the slices came from (recorded for the review page)")
     s.add_argument("--out", required=True, help="run folder to create (candidates.json)")
     s.add_argument("--progress", action="store_true", help="JSON-lines progress on stderr")
+    o = sub.add_parser("others", help="add the model's other detections to an earlier run's review slices")
+    o.add_argument("--run", required=True)
+    o.add_argument("--confidence", type=float, default=OTHERS_CONFIDENCE, help=f"lowest score kept (default {OTHERS_CONFIDENCE})")
+    o.add_argument("--threads", type=int, default=4)
+    o.add_argument("--progress", action="store_true", help="JSON-lines progress on stderr")
     e = sub.add_parser("export", help="write accepted slices as a dataset")
     e.add_argument("--run", required=True)
     e.add_argument("--decisions", help="decisions JSON (default: the run's decisions.json)")
@@ -341,12 +426,17 @@ def main(argv: list[str] | None = None) -> int:
             result = scan(args.dataset, args.model, args.target,
                           [c.strip() for c in args.model_classes.split(",")] if args.model_classes else None,
                           args.confidence, limit=args.limit, threads=args.threads, frames_root=args.frames_root, progress=emit,
-                          data_source_id=args.device_id)
+                          data_source_id=args.device_id, device=args.device)
             out.mkdir(parents=True, exist_ok=True)
             (out / "candidates.json").write_text(json.dumps(result, separators=(",", ":")))
             summary = {k: result[k] for k in ("target", "targets", "complete", "totals", "elapsedSeconds")}
             print(json.dumps({"kind": "zira.defect-scan", "run": str(out.resolve()), **summary,
                               "model": result["model"]["name"], "slices": result["dataset"]["slices"]}))
+        elif args.command == "others":
+            if not 0 < args.confidence < 1:
+                raise EvalError("confidence must be between 0 and 1")
+            emit = (lambda event, **f: print(json.dumps({"event": event, **f}), file=sys.stderr, flush=True)) if args.progress else None
+            print(json.dumps(add_others(args.run, threads=args.threads, confidence=args.confidence, progress=emit)))
         else:
             print(json.dumps(export(args.run, args.out, args.name, args.decisions, args.all_reviewed, not args.no_known,
                                     args.val_share, args.zip, args.replace, args.whole, args.keep_unsure)))

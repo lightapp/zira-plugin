@@ -14,8 +14,8 @@ const ROUTES = [
 export const POST_LINKED_FIELDS = Object.freeze(["sourceId", "fileIds", "imageIds", "mentions", "fromChannelId"]);
 
 export class ZiraApiError extends Error {
-  constructor(status, operation, { code, details } = {}) {
-    super(`Zira ${operation} failed (HTTP ${status})`);
+  constructor(status, operation, { code, details, message } = {}) {
+    super(`Zira ${operation} failed (HTTP ${status})${code ? ` [${code}]` : ""}${message ? `: ${message}` : ""}`);
     this.status = status;
     this.operation = operation;
     if (code) this.code = code;

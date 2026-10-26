@@ -35,6 +35,10 @@ create previews the confirmation card by default. --apply creates the report cha
 AI agent, schedule and followers (they receive each report by post, notification and email).
 A same-name report channel at the site blocks creation. --resolve-pending settles an earlier
 attempt with an unknown or partial outcome after the user checked (or cleaned up) Zira.
+draft/create --resume --apply continues the matching unfinished receipt after live scope checks.
+If the receipt has no agent ID, supply --agent-id ID (reuse) or --agent-id none only after
+checking that no agent exists. create recovery also needs --schedule-id none after
+checking that no schedule exists. An attempted schedule is never retried by resume.
 Exit 0 success, 2 invalid/failed, 3 partial or unverified, 4 blocked (JSON explains).
 `;
 
@@ -262,7 +266,7 @@ export async function resolvePlan(call, plan, now = new Date()) {
   const range = REPORT_RANGES[schedule.covers];
   return {
     site, name, question, answerStyle, schedule, range, recipients,
-    dashboards: dashboards.map(d => ({ id: String(d.id), name: String(d.name ?? "") })),
+    dashboards: dashboards.map(d => ({ id: String(d.id), name: String(d.name ?? ""), associatedToSystems: d.associatedToSystems ?? [] })),
     widgets: widgetIds.map(w => available.get(w)),
     sample: sampleRequest(dashboards, widgetIds, schedule.covers, now),
     card: {
@@ -353,34 +357,105 @@ async function readBack(call, r, created) {
 async function createChannelAndAgent(call, r, ctx) {
   const { created, progress } = ctx;
   ctx.step = "the report channel";
-  const typeId = await channelType(call, r.site);
-  created.systemId = String((await call("POST", "/systems/new", {
-    name: r.name, site: { id: r.site.id, name: r.site.name }, type: { id: typeId }, description: `AI report: ${describeSchedule(r.schedule)}`,
-  })).data ?? "");
-  if (!id(created.systemId)) throw new Error("The report channel was not created");
-  await progress({ systemId: created.systemId });
-  created.channelId = String((await call("GET", `/systems/${created.systemId}`)).data?.channelId ?? "");
-  if (!id(created.channelId)) throw new Error("The report channel ID could not be read");
-  await progress({ channelId: created.channelId });
+  if (!created.systemId) {
+    const typeId = await channelType(call, r.site);
+    created.systemId = String((await call("POST", "/systems/new", {
+      name: r.name, site: { id: r.site.id, name: r.site.name }, type: { id: typeId }, description: `AI report: ${describeSchedule(r.schedule)}`,
+    })).data ?? "");
+    if (!id(created.systemId)) throw new Error("The report channel was not created");
+    await progress({ systemId: created.systemId });
+  }
+  if (!created.channelId) {
+    created.channelId = String((await call("GET", `/systems/${created.systemId}`)).data?.channelId ?? "");
+    if (!id(created.channelId)) throw new Error("The report channel ID could not be read");
+    await progress({ channelId: created.channelId });
+  }
   const unlinked = [];
-  for (const d of r.dashboards) if (!(await linkDashboard(call, d.id, created.systemId))) unlinked.push(d.name);
+  for (const d of r.dashboards) {
+    // A resumed operation re-reads associations instead of replaying successful links.
+    if (ctx.resuming && (d.associatedToSystems ?? []).some(s => String(s.id) === created.systemId)) continue;
+    if (!(await linkDashboard(call, d.id, created.systemId))) unlinked.push(d.name);
+  }
   ctx.step = "the AI agent";
   const dataConfig = { timeSpan: timeSpanFor(r.range), postTypes: [], dashboards: r.dashboards.map(d => ({ id: d.id })) };
-  created.agentId = String((await call("POST", "/agents/new", { name: r.name, description: "", channelId: created.channelId, dataConfig })).data ?? "");
-  if (!id(created.agentId)) throw new Error("The AI agent was not created");
-  await progress({ agentId: created.agentId });
+  if (!created.agentId) {
+    await progress({ pendingWrite: "agent" });
+    created.agentId = String((await call("POST", "/agents/new", { name: r.name, description: "", channelId: created.channelId, dataConfig })).data ?? "");
+    if (!id(created.agentId)) throw new Error("The AI agent was not created");
+    await progress({ agentId: created.agentId });
+  }
+  if (created.agentConfigured) return unlinked;
   // agents/new keeps only the legacy shape; next-gen fields need this follow-up.
+  await progress({ pendingWrite: "agent-update" });
   await call("PUT", `/agents/${created.agentId}`, {
     name: r.name, description: "", question: r.question,
     dataConfig: { ...dataConfig, widgetIds: r.widgets.map(w => w.id), answerStyle: r.answerStyle, answerExample: [], fontSize: null },
   });
+  created.agentConfigured = true;
+  await progress({ agentConfigured: true, pendingWrite: null });
   return unlinked;
+}
+
+// No writes here. Keep receipt recovery behind the original lock and verify every owner.
+// Agent listing is not available to assistant tokens, so absence cannot be inferred.
+async function recoverReport(call, r, prior, { agentId, scheduleId }, scheduling) {
+  const created = { ...prior.created };
+  for (const field of ["systemId", "channelId", "agentId", "scheduleId"])
+    if (!created[field] && prior[field]) created[field] = String(prior[field]);
+  const stop = message => { throw new Blocked("recovery_required", message, { created }); };
+  if (!id(created.systemId)) stop("The receipt has no system ID. Reconcile the original creation in Zira; do not create another system.");
+  // This must succeed after the backend scope fix; a channel fallback must not bypass it.
+  const system = (await call("GET", `/systems/${created.systemId}`)).data;
+  if (String(system?.id) !== created.systemId || String(system?.site?.id) !== r.site.id || system?.isDeleted ||
+      normalizeName(system?.name) !== normalizeName(r.name)) stop("The saved system does not match this report and site.");
+  if (!created.channelId) {
+    created.channelId = String(system.channelId ?? "");
+    if (!id(created.channelId)) {
+      const rows = await listAll(call, "/channels/all", { entityTypeIds: "5", siteIds: r.site.id, includePublic: "true", onlyFollowing: "false" });
+      const matches = rows.filter(c => String(c.context?.system) === created.systemId && String(c.context?.site) === r.site.id);
+      if (matches.length !== 1) stop("No single channel belongs to the saved system. Reconcile it in Zira.");
+      created.channelId = String(matches[0].id);
+    }
+  }
+  if (!id(created.channelId)) stop("The saved channel ID is invalid.");
+  const channel = (await call("GET", `/channels/${created.channelId}`)).data;
+  if (String(channel?.id) !== created.channelId || String(channel?.context?.site) !== r.site.id ||
+      String(channel?.context?.system) !== created.systemId ||
+      (system.channelId != null && String(system.channelId) !== created.channelId)) stop("The channel does not belong to the saved system and site.");
+  if (agentId !== undefined && agentId !== "none" && !id(agentId)) stop("Use an existing agent ID or none after checking Zira.");
+  if (created.agentId && agentId !== undefined && agentId !== created.agentId) stop("The supplied agent conflicts with the receipt.");
+  if (!created.agentId) {
+    if (agentId === undefined) stop("Check the channel's AI agents, then supply --agent-id ID to reuse one or --agent-id none if none exists.");
+    if (agentId !== "none") created.agentId = agentId;
+  }
+  if (created.agentId) {
+    const draft = await readDraft(call, r.site, created.channelId, created.agentId);
+    const equalIds = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+    const matches = draft.question === r.question && draft.covers === r.schedule.covers &&
+      equalIds(draft.widgetIds, r.widgets.map(w => w.id)) && equalIds(draft.dashboardIds, r.dashboards.map(d => d.id)) &&
+      equalIds(draft.answerStyle, r.answerStyle) && draft.name === r.name;
+    // A known newly created, still empty agent can receive its initial configuration.
+    const empty = prior.created?.agentId === created.agentId && !prior.created?.agentConfigured && !draft.question && !draft.widgetIds.length &&
+      draft.name === r.name && !draft.answerStyle.length && draft.covers === r.schedule.covers &&
+      equalIds(draft.dashboardIds, r.dashboards.map(d => d.id));
+    if (!matches && !empty) stop("The existing agent differs from the plan. Review its current wording and use show/update-draft; recovery will not overwrite edits.");
+    created.agentConfigured = matches;
+  }
+  if (scheduling) {
+    if (created.scheduleId || created.scheduled || created.pendingWrite === "schedule" || created.pendingWrite === "followers")
+      stop("A schedule was accepted or attempted. Inspect it in Zira; resume will not repeat schedule creation or delivery changes.");
+    if (scheduleId !== "none")
+      stop("The receipt cannot rule out a manually created schedule. Check Zira and supply --schedule-id none only if no schedule exists.");
+  }
+  return created;
 }
 
 // The schedule with its AI Report action, then the recipients as channel followers.
 async function scheduleAndFollow(call, { site, name, schedule, recipients }, ctx) {
   const { created, progress } = ctx;
   ctx.step = "the schedule";
+  created.pendingWrite = "schedule";
+  await progress({ pendingWrite: "schedule" });
   const scheduleId = String((await call("POST", "/schedules/new", {
     systemId: created.systemId, siteId: site.id, isActive: true, name,
     scheduleTypeId: schedule.period === "week" ? "2" : "3",
@@ -399,8 +474,10 @@ async function scheduleAndFollow(call, { site, name, schedule, recipients }, ctx
   if (id(scheduleId)) created.scheduleId = scheduleId;
   await progress({ scheduled: true, ...(id(scheduleId) ? { scheduleId } : {}) });
   ctx.step = "the people";
+  await progress({ pendingWrite: "followers" });
   await call("PUT", route(`/channels/${created.channelId}/addChannelFollowers`, { userIds: recipients.map(p => p.id).join(",") }));
   created.followersAdded = true;
+  await progress({ followersAdded: true, pendingWrite: null });
 }
 
 const unlinkedWarning = names => names?.length
@@ -425,20 +502,23 @@ function duplicateGuards(call, profile, r) {
 function partialResult(kind, profile, outcome) {
   return { kind, profile, applied: true, state: "partial", failedStep: outcome.failedStep, reason: outcome.reason,
     created: outcome.created, ...createdLinks(profile, outcome.created),
-    message: `Creating ${outcome.failedStep} failed. Already created records remain; finish or remove them in Zira instead of re-running.` };
+    message: `Creating ${outcome.failedStep} failed. Already created records remain. Review them before using draft/create --resume; never start a replacement report or blindly retry a schedule.` };
 }
 
-export async function createReport({ call, profile = "prod", plan, apply = false, allowRepeat = false, receipts, resolve, now }) {
+export async function createReport({ call, profile = "prod", plan, apply = false, allowRepeat = false, receipts, resolve, now, resume = false, agentId, scheduleId }) {
   const r = await resolvePlan(call, plan, now);
-  if (!apply) return { kind: "ai-report-draft", profile, applied: false, confirm: r.card, sample: r.sample };
+  if (!apply) return { kind: "ai-report-draft", profile, applied: false, confirm: resume ? { ...r.card,
+    delivery: "Resume the matching receipt, reuse verified records, then schedule and add recipients. Apply first rechecks ownership and stops on any uncertain schedule attempt." } : r.card, sample: r.sample };
   const outcome = await guardedWrite({
     file: receipts, allowRepeat, resolve, resolveField: "channelId",
     key: fingerprint({ op: "ai-report", profile, siteId: r.site.id, name: normalizeName(r.name), schedule: r.schedule, dashboards: r.dashboards.map(d => d.id).sort() }),
     summary: { kind: "ai-report", siteId: r.site.id, name: r.name },
     links: created => createdLinks(profile, created),
+    resume: resume ? prior => recoverReport(call, r, prior, { agentId, scheduleId }, true) : undefined,
     ...duplicateGuards(call, profile, r),
-    run: async progress => {
-      const ctx = { created: {}, progress, step: "the report channel" };
+    run: async (progress, seed) => {
+      const ctx = { created: seed ?? {}, progress, resuming: resume, step: "the report channel" };
+      if (seed) await progress(seed);
       try {
         const unlinked = await createChannelAndAgent(call, r, ctx);
         await scheduleAndFollow(call, r, ctx);
@@ -471,9 +551,9 @@ export async function createReport({ call, profile = "prod", plan, apply = false
 const DRAFT_DELIVERY = "Creates the report channel and its AI agent only. Nothing is scheduled and nobody is emailed until you schedule it.";
 
 // A draft is the channel and agent without a schedule, so the user can preview and edit it on the agent page first.
-export async function draftReport({ call, profile = "prod", plan, apply = false, allowRepeat = false, receipts, resolve, now }) {
+export async function draftReport({ call, profile = "prod", plan, apply = false, allowRepeat = false, receipts, resolve, now, resume = false, agentId }) {
   const r = await resolvePlan(call, plan, now);
-  const card = { ...r.card, delivery: DRAFT_DELIVERY };
+  const card = { ...r.card, delivery: resume ? `Resume the matching receipt and reuse verified records. ${DRAFT_DELIVERY}` : DRAFT_DELIVERY };
   delete card.sentTo;
   if (!apply) return { kind: "ai-report-draft", profile, applied: false, draft: true, confirm: card, sample: r.sample };
   const outcome = await guardedWrite({
@@ -481,9 +561,11 @@ export async function draftReport({ call, profile = "prod", plan, apply = false,
     key: fingerprint({ op: "ai-report-draft", profile, siteId: r.site.id, name: normalizeName(r.name), dashboards: r.dashboards.map(d => d.id).sort() }),
     summary: { kind: "ai-report-draft", siteId: r.site.id, name: r.name },
     links: created => createdLinks(profile, created),
+    resume: resume ? prior => recoverReport(call, r, prior, { agentId }, false) : undefined,
     ...duplicateGuards(call, profile, r),
-    run: async progress => {
-      const ctx = { created: {}, progress, step: "the report channel" };
+    run: async (progress, seed) => {
+      const ctx = { created: seed ?? {}, progress, resuming: resume, step: "the report channel" };
+      if (seed) await progress(seed);
       try {
         const unlinked = await createChannelAndAgent(call, r, ctx);
         const verified = await readBack(call, { ...r, recipients: [] }, ctx.created);
@@ -651,6 +733,7 @@ export async function main(args = process.argv.slice(2)) {
     plan: { type: "string" }, apply: { type: "boolean" }, "allow-repeat": { type: "boolean" },
     receipts: { type: "string" }, profile: { type: "string" }, "resolve-pending": { type: "string" },
     "channel-id": { type: "string" }, "agent-id": { type: "string" }, changes: { type: "string" },
+    resume: { type: "boolean" }, "schedule-id": { type: "string" },
   } });
   const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
   originFor(profile);
@@ -665,8 +748,9 @@ export async function main(args = process.argv.slice(2)) {
     if (!file) throw new Error(`--${flag} FILE required`);
     return JSON.parse(await readFile(file, "utf8"));
   };
-  if (args[0] === "create") return createReport({ call, profile, plan: await json(o.plan, "plan"), ...write });
-  if (args[0] === "draft") return draftReport({ call, profile, plan: await json(o.plan, "plan"), ...write });
+  const recovery = { resume: !!o.resume, agentId: o["agent-id"], scheduleId: o["schedule-id"] };
+  if (args[0] === "create") return createReport({ call, profile, plan: await json(o.plan, "plan"), ...write, ...recovery });
+  if (args[0] === "draft") return draftReport({ call, profile, plan: await json(o.plan, "plan"), ...write, ...recovery });
   if (args[0] === "show") return showDraft({ ...scope, ...draft });
   if (args[0] === "update-draft") return updateDraft({ ...scope, ...draft, changes: await json(o.changes, "changes"), apply: write.apply, receipts: write.receipts });
   if (args[0] === "schedule") return scheduleDraft({ call, profile, plan: await json(o.plan, "plan"), ...draft, ...write });

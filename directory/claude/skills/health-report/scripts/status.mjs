@@ -1,3 +1,4 @@
+import { movementJournal } from "./movement.mjs";
 import { dataSourceUrl } from "./links.mjs";
 const booleanFields = [
   "onLine",
@@ -10,6 +11,7 @@ const booleanFields = [
   "cellularConnected",
   "ethernetConnected",
   "exceptionReported",
+  "externalPowerConnected",
 ];
 export function statusValues(raw = {}) {
   raw ??= {};
@@ -21,12 +23,46 @@ export function statusValues(raw = {}) {
   if (Number.isFinite(raw.temperature)) values.temperature = raw.temperature;
   if (["C", "F", "K"].includes(raw.temperatureUnit))
     values.temperatureUnit = raw.temperatureUnit;
+  if (raw.storage && typeof raw.storage === "object") values.storage = storageValues(raw.storage);
+  if (raw.cameraHealth?.schemaVersion === 1) {
+    const h = raw.cameraHealth, out = { schemaVersion: 1 };
+    for (const key of ["sampleAtEpochMs", "lastViewAtEpochMs", "lastUploadAtEpochMs"])
+      if (Number.isSafeInteger(h[key]) && h[key] >= 0) out[key] = h[key];
+    for (const key of ["cameraMoved", "externalPowerConnected", "wifiConnected", "ethernetConnected", "cellularConnected", "recentBump"])
+      if (typeof h[key] === "boolean") out[key] = h[key];
+    if (h.storage && typeof h.storage === "object") out.storage = storageValues(h.storage);
+    if (h.movement !== undefined) out.movement = movementJournal(h.movement);
+    values.cameraHealth = out;
+  }
   return values;
 }
-export function deviceStatus(raw, rule, current) {
+function storageValues(raw) {
+  const out = {};
+  for (const key of ["freeBytes", "totalBytes", "appBytes", "appCodeBytes", "appDataBytes", "appCacheBytes", "sampleAtEpochMs"])
+    if (Number.isSafeInteger(raw[key]) && raw[key] >= 0) out[key] = raw[key];
+  return out;
+}
+export function deviceStatus(raw, rule, current, now = Date.now()) {
   const values = statusValues(raw),
     warnings = [],
     assessedCodes = [];
+  const health = raw?.cameraHealth;
+  const age = now - health?.sampleAtEpochMs;
+  const healthFresh = health?.schemaVersion === 1 && Number.isFinite(age) && age >= -60_000 && age <= 600_000;
+  // Once this protocol is advertised, legacy defaults must not fill missing sensor evidence.
+  if (health?.schemaVersion === 1) for (const key of ["cameraMoved", "externalPowerConnected", "wifiConnected", "ethernetConnected", "cellularConnected", "recentBump"])
+    delete values[key];
+  if (healthFresh) for (const key of ["cameraMoved", "externalPowerConnected", "wifiConnected", "ethernetConnected", "cellularConnected", "recentBump"])
+    if (typeof health[key] === "boolean") values[key] = health[key];
+  const storage = raw?.storage ?? (healthFresh ? health?.storage : null);
+  const storageAge = now - storage?.sampleAtEpochMs;
+  const storageFresh = Number.isFinite(storageAge) && storageAge >= -60_000 && storageAge <= 600_000;
+  if (storage && typeof storage === "object") {
+    values.storage = {};
+    for (const key of ["freeBytes", "totalBytes", "appBytes", "appCodeBytes", "appDataBytes", "appCacheBytes", "sampleAtEpochMs"])
+      if (Number.isSafeInteger(storage[key]) && storage[key] >= 0) values.storage[key] = storage[key];
+    values.storage.freshness = current && storageFresh ? "current" : "last-known";
+  }
   const check = (code, available, bad, title, evidence = {}) => {
     if (!available) return;
     assessedCodes.push(code);
@@ -37,6 +73,8 @@ export function deviceStatus(raw, rule, current) {
     ["cameraOn", false, "camera-off", "Camera reports off"],
     ["deviceOn", false, "device-off", "Device reports power off"],
     ["exceptionReported", true, "device-exception", "Device reports an error"],
+    ["externalPowerConnected", false, "external-power-lost", "External power disconnected"],
+    ["recentBump", true, "camera-bumped", "Camera reports a recent bump; inspect the mount"],
   ])
     check(code, typeof values[key] === "boolean", values[key] === bad, title);
   const links = [
@@ -44,6 +82,19 @@ export function deviceStatus(raw, rule, current) {
     values.cellularConnected,
     values.ethernetConnected,
   ];
+  check(
+    "cellular-only",
+    links.every((x) => typeof x === "boolean"),
+    values.cellularConnected === true && values.wifiConnected === false && values.ethernetConnected === false,
+    "Cellular only; no Wi-Fi or Ethernet connected",
+  );
+  check(
+    "low-storage",
+    storageFresh && Number.isSafeInteger(values.storage?.freeBytes) && values.storage.freeBytes >= 0,
+    values.storage?.freeBytes < 10 * 1024 ** 3,
+    "Device storage below 10 GiB",
+    { freeBytes: values.storage?.freeBytes, sampleAtEpochMs: values.storage?.sampleAtEpochMs },
+  );
   check(
     "network-disconnected",
     links.every((x) => typeof x === "boolean"),
@@ -88,6 +139,11 @@ export function statusText(status) {
   if (Number.isFinite(v.battery)) parts.push(`Battery ${v.battery}%`);
   if (typeof v.isCharging === "boolean")
     parts.push(v.isCharging ? "charging" : "not charging");
+  if (typeof v.externalPowerConnected === "boolean") parts.push(`External power: ${v.externalPowerConnected ? "connected" : "disconnected"}`);
+  if (v.storage) {
+    const gib = x => Number.isSafeInteger(x) ? `${(x / 1024 ** 3).toFixed(1)} GiB` : "unavailable";
+    parts.push(`Storage (${v.storage.freshness}): ${gib(v.storage.freeBytes)} free; app ${gib(v.storage.appBytes)}`);
+  }
   if (Number.isFinite(v.temperature))
     parts.push(
       `Temperature ${v.temperature}${v.temperatureUnit ? `°${v.temperatureUnit}` : " (unit unavailable)"}`,
@@ -125,10 +181,14 @@ export function statusIndicators(status) {
     add("power", `♨ ${value}`, `Temperature ${value}${unit ? "" : "; unit unavailable"}`, "high-temperature");
   }
   if (typeof v.deviceOn === "boolean") add("power", `⏻ ${v.deviceOn ? "On" : "Off"}`, `Power ${v.deviceOn ? "on" : "off"}`, "device-off");
+  if (typeof v.externalPowerConnected === "boolean") add("power", v.externalPowerConnected ? "Plugged in" : "Unplugged", "External power connection", "external-power-lost");
+  if (Number.isSafeInteger(v.storage?.freeBytes)) add("power", `${(v.storage.freeBytes / 1024 ** 3).toFixed(1)} GiB free`, `Storage ${v.storage.freshness}; app ${Number.isSafeInteger(v.storage.appBytes) ? (v.storage.appBytes / 1024 ** 3).toFixed(1) + " GiB" : "usage unavailable"}`, "low-storage");
+  if (warnings.has("cellular-only")) add("network", "Cellular only", "No Wi-Fi or Ethernet connected", "cellular-only");
   for (const [key, label] of [["wifiConnected", "Wi-Fi"], ["cellularConnected", "Cell"], ["ethernetConnected", "LAN"]])
     if (typeof v[key] === "boolean") add("network", `${label} ${v[key] ? "✓" : "—"}`, `${label}: ${v[key] ? "connected" : "disconnected"}`, "network-disconnected", !v[key]);
   if (typeof v.cameraOn === "boolean") add("camera", `◉ ${v.cameraOn ? "On" : "Off"}`, `Camera ${v.cameraOn ? "on" : "off"}`, "camera-off");
-  if (typeof v.cameraMoved === "boolean") add("camera", v.cameraMoved ? "↔ Moved" : "↔ No movement", `Camera movement ${v.cameraMoved ? "reported" : "not reported"}`, "camera-moved", !v.cameraMoved);
+  if (status?.movement) add("camera", `${status.movement.incidents.filter(e => !e.acknowledgement).length} unreviewed movement incidents`, "Dated movement history; acknowledgement is not calibration", warnings.has("camera-bumped") ? "camera-bumped" : "camera-moved");
+  else if (typeof v.cameraMoved === "boolean") add("camera", v.cameraMoved ? "↔ Moved" : "↔ No movement", `Camera movement ${v.cameraMoved ? "reported" : "not reported"}`, "camera-moved", !v.cameraMoved);
   if (typeof v.exceptionReported === "boolean") add("camera", v.exceptionReported ? "! Error" : "No error", `Device error ${v.exceptionReported ? "reported" : "not reported"}`, "device-exception", !v.exceptionReported);
   return groups;
 }
@@ -137,7 +197,10 @@ export function statusIndicators(status) {
 export function statusWarnings(report) {
   return (report.devices ?? []).flatMap((d) =>
     (d.deviceStatus?.warnings ?? []).map((w) => ({
-      key: `${d.deviceKey ?? `${d.siteId}:${d.id}`}:${w.code}`,
+      key: `${d.deviceKey ?? `${d.siteId}:${d.id}`}:${w.code}${w.evidence?.incidentId ? ":" + w.evidence.incidentId : ""}`,
+      deviceKey: d.deviceKey,
+      incidentId: w.evidence?.incidentId,
+      atEpochMs: w.evidence?.atEpochMs,
       code: w.code,
       title: w.title,
       freshness: d.deviceStatus.freshness,

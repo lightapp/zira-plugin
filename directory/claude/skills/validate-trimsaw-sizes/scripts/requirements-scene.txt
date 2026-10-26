@@ -1,0 +1,5 @@
+# Camera-view check runtime for validate-trimsaw-sizes (installed by `trimsaw-sizes.mjs scene-setup --confirm`).
+# Python 3.11 or newer. Keep tools/trimsaw-scene-drift/requirements.txt identical.
+av==17.1.0
+numpy==2.3.5
+Pillow==12.3.0

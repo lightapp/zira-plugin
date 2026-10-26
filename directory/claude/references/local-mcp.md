@@ -71,3 +71,8 @@ entrypoints; they are not added to the public MCP surface.
 Jobs keep bounded output in memory, expire after 30 minutes and stop on server shutdown. Save large
 reports to their documented output files. Inspect saved results if output was truncated. Local
 report/review servers explicitly started by helpers retain their existing idle/stop lifecycle.
+
+Device Status also supports `command: "movement"` with company/site scope and `--days 7`
+(or offset-qualified `--from`/`--to`), and `command: "acknowledge"` with the reviewed report path,
+company ID, exact incident IDs and a note. Acknowledge previews by default; `--apply` saves only
+local review receipts. Follow the Device Status skill's authorization and coverage rules.

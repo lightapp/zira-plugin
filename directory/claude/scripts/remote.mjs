@@ -276,10 +276,29 @@ export function liveSummary(m, names = {}) {
     ...(m.sectionStatuses ? { sectionStatuses: Array.isArray(m.sectionStatuses) ? m.sectionStatuses.slice(0, 10).map(s => prim(s) ? s : flat(s, 8)) : flat(m.sectionStatuses) } : {}) };
 }
 
+// Vision-App presence extras (StorageReport, NetworkUsage); absent on older builds.
+const GIB = 1024 ** 3;
+const gib = v => (Number.isFinite(v) && v >= 0 ? Math.round(v / GIB * 10) / 10 : undefined);
+function storageOf(st) {
+  if (!st || typeof st !== "object") return undefined;
+  return defined({ freeGiB: gib(st.freeBytes), totalGiB: gib(st.totalBytes), low: typeof st.low === "boolean" ? st.low : undefined,
+    appGiB: gib(st.appBytes), uploadBacklogGiB: gib(st.uploadBacklogBytes),
+    uploadBacklogFiles: Number.isInteger(st.uploadBacklogFiles) ? st.uploadBacklogFiles : undefined });
+}
+const CONNECTIONS = ["ethernet", "wifi", "cellular", "vpn", "none"];
+function connectionOf(u) {
+  if (!u || typeof u !== "object" || !CONNECTIONS.includes(u.current)) return undefined;
+  const today = u.minutesByDay?.[u.today];
+  return defined({ current: u.current, since: time(u.sinceMs) ?? undefined,
+    todayMinutes: today && typeof today === "object" ? Object.fromEntries(CONNECTIONS.filter(t => Number.isInteger(today[t])).map(t => [t, today[t]])) : undefined,
+    changes: Array.isArray(u.changes) ? u.changes.length : undefined });
+}
+
 export function statusSummary(kind, m) {
   if (!m || typeof m !== "object") return null;
   const at = time(m.updatedAt ?? m.ts ?? m.timestamp ?? m._ts);
-  if (kind === "presence") return { at, connected: m.connected !== false, ...pick(m, ["model", "deviceName", "hwId", "batteryLevel", "isCharging"]) };
+  if (kind === "presence") return { at, connected: m.connected !== false, ...pick(m, ["model", "deviceName", "hwId", "batteryLevel", "isCharging"]),
+    ...defined({ storage: storageOf(m.storage), connection: connectionOf(m.networkDiagnostics?.usage) }) };
   if (kind === "settings") {
     const body = m.settings && typeof m.settings === "object" && !Array.isArray(m.settings) ? m.settings : m;
     return { at, reason: cut(m._reason), settings: flat2(body, 60), groups: Object.keys(body).filter(k => !k.startsWith("_")).length };

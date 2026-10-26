@@ -6,6 +6,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { discover, liveClient, normalizeDevice, pages } from "../skills/health-report/scripts/api.mjs";
 import { assess } from "../skills/health-report/scripts/engine.mjs";
+import { loadMovementLedger, reviewMovement } from "../skills/health-report/scripts/movement.mjs";
 import { DEFAULT_BATTERY_MIN } from "../skills/device-status/scripts/device-status.mjs";
 import { attention } from "../skills/health-report/scripts/dashboard.mjs";
 import { originFor } from "./browse.mjs";
@@ -96,6 +97,7 @@ export async function fleet(get, { company, site, profile = "prod", maxDevices =
   const { report } = assess({ version: 1, companyId, companyName: c.item.name, assessedAt: now,
     window: { from: new Date(at - 3600000).toISOString(), to: now }, sourceProfile: profile,
     complete, devices }, config);
+  reviewMovement(report, null, { ledger: await loadMovementLedger(profile, companyId) });
   const { rows, needsCheck } = attention(report);
   const byId = new Map(report.devices.map(d => [d.id, d]));
   const types = new Map(devices.map(d => [d.id, d.type]));

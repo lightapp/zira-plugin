@@ -53,6 +53,7 @@ A time result has a `time` column, then one column per measure (or per group). H
 - `summary` and section `text` accept paragraphs, `- ` bullets, `### ` headings and `**bold**`. No HTML or links.
 - `range` defaults to the whole dataset. KPI queries use one measure and ignore `interval` and `groupBy`.
 - A section has a `chart`, a `table`, `text`, or a combination. A chart without a table gets a table view; `table.maxRows` (default 200) limits the rows shown, while CSV export has all of them. `chart.height` is 180-900 px (default 340).
+- Helpers that compute values outside the readings can add `images` (1-24 `{src, caption?, alt?, width?}`, where `src` is a PNG data URI under 4 MB, 12 MB per section, and `width` 40-1200 px) and a `staticTable` (`{columns: [1-12 names], rows: [up to 200 rows of text or numbers]}`). Both are shown as they are; they do not follow the From/To controls and have no CSV export. Validate Trimsaw Sizes uses them for its camera-view pictures.
 - `chart.option` is an [ECharts option](https://echarts.apache.org/en/option.html) in JSON, merged over the report's styled defaults. Leave out `dataset`: the report supplies the query result, and series refer to its columns by name through `encode` (such as `{"x": "time", "y": "Trimsaw 1"}`). Without `series`, each measure column becomes a line. Give one `{"type": "bar"}` per column for bars, or set `encode` for other forms (scatter, heatmap, pie, boxplot…). Functions, markup and script links are rejected.
 
 ## Chart rules

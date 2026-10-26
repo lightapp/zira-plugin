@@ -60,3 +60,12 @@ When the Zira plugin's `schedule-health-report` skill is installed, use it for r
 When asked to schedule, reuse scope and task policy, resolve the time and named timezone, and clarify company-wide versus each-site local time. Generate `schedule --config FILE`, then use the host's supported scheduling tool/command to create or update the actual job. Verify the scheduler's saved identity and next run before saying it is active. The CLI's schedule output is only a handoff, never an activated job. Keep future task-write authorization separate from a one-time “fix all.” See handling reference before unattended execution.
 
 Dashboard rows separate Issues, Power & temperature, Network, and Camera & errors into compact labeled indicators. Hover for full values or expand Details for the complete status and reporting reason. Each source labels status freshness; amber indicates a last-known warning to verify, red a current assessed alert. Unknown temperature units stay explicit, and an unused network interface is not an outage.
+
+## Reviewed camera movement
+
+Dated movement incidents use a seven-day attention window and the shared local review receipts.
+For a different movement window or to acknowledge incidents the user has reviewed, follow
+[Device Status](../device-status/SKILL.md). Acknowledgement and window expiry are not recovery;
+do not repeat acknowledged history as an active fault. Physical flags remain in evidence. Legacy
+flags without dated history cannot prove when a camera moved. Receipts do not sync across computers
+or acknowledge the separate cloud notification service.

@@ -22,7 +22,7 @@ measurements. No Cut is set when the board did not reach the saw line the camera
 | Uncut boards well short of their stop | Short pieces pushed to a stop, or boards not against any stop | Usually operational |
 | Unmatched group just below a stop | Boards not pushed fully against it or bounced back, cut short | Operational; the band is ±0.6 by default |
 | One label stops exactly when another starts, same measured position | The line was relabelled, not moved; both are one physical stop | Merge them in the report; add a separate line if both sizes really run |
-| Every stop's measured value steps at the same time | The camera moved, was rotated or re-zoomed, or its analysis rotation changed | Keep the camera setup fixed during production |
+| Every stop's measured value steps or drifts at the same time | The camera moved, was rotated or re-zoomed, or its analysis rotation changed | Compare its recordings ([camera view](#camera-view-over-time)); keep the camera setup fixed during production |
 | Uncut boards at two or more stops all measure the same percentage short or long | The camera's scale is off by that ratio; every pre-cut length is off by it too | Rescale pre-cut in the report; fix the calibration on the camera |
 | Pre-cut peaks at sizes that match no stop and no stock | Pre-cut scale or a stop label is wrong | Confirm with a tape-measured board |
 | A cut board shorter than its stop | Impossible physically; pre-cut or a label is off | Above about 1% of cut boards, investigate |
@@ -87,6 +87,52 @@ How to read it:
 Stops pair by equal labels; `--pair 42.3=40` pairs a renamed line with its new label. `change` is
 the second window minus the first, and `--format text` prints the table. Keep each window inside one
 calibration; a stop with a handful of cut boards is too few to judge.
+
+## Camera view over time
+
+A trimsaw camera measures board ends in a 320 px analysis frame, so its readings are only as steady
+as the camera. A camera that turns by a tenth of a degree moves every board end about a pixel,
+which at a typical 0.37 in. per pixel is about 0.4 in. on every reading. The `scene` command and the
+report's **Camera view over time** section show whether that happened between recordings.
+
+How it works: each raw recording becomes one picture, the median of about 300 frames spread over
+the clip, so boards passing through drop out and the floor, machine and stops stay. Every picture
+is matched to the reference recording (normally the first after the last calibration) on steady
+details only: small patches compared by phase correlation, then one fit of shift, rotation and scale
+for the whole view. The shift is then measured along the stop axis of the analysis frame, at each
+stop line when the stops are given, and converted to inches with the camera's scale.
+
+| Verdict | Meaning | What to suggest |
+| --- | --- | --- |
+| Steady | The view moved under 0.5 px along the stop axis | Nothing; drift in the readings has another cause |
+| View moved | The whole recorded view moved together by 0.5 px or more | Compare each stop's readings at the same times. Every stop shifting by about the predicted amount in the same direction supports a camera move: check the mount, then recollect. Readings that did not move, or moved in opposite directions, point elsewhere: ask which sizes the site ran that day |
+| Part of the view moved | One third of the picture moved unlike the rest | Something in view moved (a guard, a machine part); check what changed there |
+| Uncertain | Too few steady details matched, they disagreed, or the picture size changed | Compare another recording from that day |
+
+The section shows the pictures with their shift, an edge overlay of the largest shift (reference
+edges red, that recording's cyan, white where they line up) with an enlarged patch, and a table of
+every recording. When the view moved, every edge in the overlay shows the same red/cyan fringe in
+the same direction. The shift's sign follows the frame's stop axis; the reading change says what it
+does to lengths (negative reads shorter).
+
+**A view move is a reason to check the readings, not proof.** The snapshots come from the raw recording. At Kamps Mulberry on 2026-10-22 the recorded view moved 2.1 px between 07:00 and 10:00 while every stop read the same at both times, and the readings swung within half an hour in opposite directions (one stop long while another read short), which no shift, turn or zoom of the camera can do. Recordings minutes apart matched within 0.05 px, so the snapshot measurement itself was sound.
+
+**The camera's own "camera moved" status is not this check.** It comes from the phone's tilt
+sensors: pitch or roll more than 2 degrees away from a stored reference, held for 5 minutes. Its
+reference is set by the legacy Calibration screen (or the first reading), not by applying, editing
+or pushing stops, and it misses the sub-degree turns that matter here. A quiet status does not
+mean the view stayed put.
+
+Limits:
+
+- It compares views, not lengths. Confirm the effect on readings with the size fit before and
+  after a move (`compare`) or with tape-measured boards.
+- Only recordings uploaded to Zira can be compared; the device keeps others until a sync. Choose a
+  reference recorded after the last calibration, or the shifts describe the calibration change too.
+- A turn of the camera and a slide of the whole saw look the same; both show as the whole view
+  moving. Strong lighting changes or a picture full of moving boards can leave a recording uncertain.
+- Without stop positions and the scale, shifts are given in analysis px at the frame's centre
+  line. The camera's small analysis deskew is ignored.
 
 ## What the report cannot tell
 

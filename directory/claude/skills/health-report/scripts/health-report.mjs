@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { loadMovementLedger, reviewMovement } from "./movement.mjs";
 import { parseArgs } from "node:util";
 import { realpathSync } from "node:fs";
 import path from "node:path";
@@ -19,7 +20,7 @@ import { readJson, writePrivate, withLock } from "./storage.mjs";
 import { prepareShare } from "./sharing.mjs";
 import { internalTaskClient, ZiraApiError } from "./task-api.mjs";
 import { taskDrafts, handleTasks, updateTask } from "./tasks.mjs";
-const HELP = `health-report 0.3.51-preview.14 — Zira health checks for Codex and Claude Code
+const HELP = `health-report 0.3.51-preview.22 — Zira health checks for Codex and Claude Code
 
 node scripts/health-report.mjs COMMAND [OPTIONS]
   auth status|login|logout ...                 Zira browser authentication
@@ -173,6 +174,10 @@ export async function main(args = process.argv.slice(2)) {
         config,
         await readJson(stateFile, {}),
       );
+      // All plugin reports share local review receipts, independent of site selection/monitor name.
+      const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
+      const ledger = await loadMovementLedger(profile, config.companyId);
+      reviewMovement(report, state, { ledger });
       const jsonFile = path.join(path.resolve(o.out), "report.json"),
         mdFile = path.join(path.resolve(o.out), "report.md"),
         htmlFile = path.join(path.resolve(o.out), "report.html");

@@ -172,7 +172,9 @@ export function normalizeDevice(list, d, config) {
           : undefined,
     status: {
       ...statusValues(raw),
-      lastHeartbeat: normalizeAt(raw.lastHeartbeat),
+      lastHeartbeat: normalizeAt(raw.lastHeartbeat) ?? (raw.cameraHealth?.schemaVersion === 1
+        && Number.isSafeInteger(raw.cameraHealth.sampleAtEpochMs) && raw.cameraHealth.sampleAtEpochMs > 0
+        && raw.cameraHealth.sampleAtEpochMs < 4102444800000 ? new Date(raw.cameraHealth.sampleAtEpochMs).toISOString() : null),
       ...(typeof raw.exception === "string" ||
       typeof raw.exception === "boolean"
         ? { exceptionReported: !!raw.exception }

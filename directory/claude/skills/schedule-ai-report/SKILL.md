@@ -17,4 +17,30 @@ For a recurring device-health check, follow [health-report](../health-report/SKI
    - **Draft and open in Zira:** after a clear yes, run `ai-report.mjs draft --plan FILE --apply`. It creates only the report channel and its AI agent; nothing is scheduled and nobody is emailed. Open `agentUrl` in the host's browser (or give the link): the agent page shows the widgets, instructions and Zira's own sample answer, and the user can edit there. Changes asked for in chat: write a changes JSON (`name`, `question`, `answerStyle`, `widgetIds`, `covers`) and run `update-draft … --changes FILE`, then with `--apply` after a yes, and show a new sample. Before scheduling, run `show` to pick up edits made on the page and, if anything changed, show a new sample. Then run `schedule --plan FILE --channel-id ID --agent-id ID` (plan: companyId, siteId, schedule, recipientIds), show its `confirm`, and after a clear yes rerun with `--apply`. Scheduling uses the agent's current wording, widgets and period. To change the period, use `update-draft` with `covers` first.
    - **Schedule now:** after a clear yes, run `ai-report.mjs create --plan FILE --apply`, which creates the channel, agent, schedule and followers in one step. Each report's followers get it as a post, a notification and an email.
 
-A draft that is not scheduled stays in Zira as a channel with an agent; if the user stops, say it exists and give its channel link so they can finish or delete it. On `drafted`, give `agentUrl` and `channelUrl`. On `created`, give the channel, schedule and agent-editor links and any `warnings`. On `unverified`, the same links plus which parts `verified` could not confirm. On `partial`, list what exists and that it must be finished or removed from those links; do not rerun. A same-name report channel at the site blocks creation (`blocked: duplicate`); pick another name or edit that report in Zira. On `blocked: authorization`, nothing was created: offer the handoff (“Schedule an AI report”) and keep the drafted wording for the step that asks what the report should tell people. Never claim an active schedule without a `created` result.
+A draft that is not scheduled stays in Zira as a channel with an agent; if the user stops, say it exists and give its channel link so they can finish or delete it. On `drafted`, give `agentUrl` and `channelUrl`. On `created`, give the channel, schedule and agent-editor links and any `warnings`. On `unverified`, the same links plus which parts `verified` could not confirm. On `partial`, list what exists and what failed. Use the receipt recovery below; do not start another report or remove existing records to force a retry. A same-name report channel at the site blocks creation (`blocked: duplicate`); pick another name or edit that report in Zira. On `blocked: authorization`, nothing was created: offer the handoff (“Schedule an AI report”) and keep the drafted wording for the step that asks what the report should tell people. Never claim an active schedule without a `created` result.
+
+
+## Recover an unfinished report
+
+Read the original receipt and retain its file and original `draft` or `create` command/plan.
+Preview the same command with `--resume`; apply only within the user's approved scope with
+`--resume --apply --receipts FILE`. A coding/debugging request does not authorize live recovery,
+scheduling, recipients, or email. `draft` recovery never schedules or adds followers.
+
+Recovery re-reads the system, its site, channel and agent. The system read must succeed; do not
+bypass a backend permission failure using a channel alone. If its channel ID is missing, the
+helper requires one channel whose `context.system` and `context.site` match. Existing dashboard
+associations are skipped. The helper preserves agent edits: if they differ from the plan, review
+with `show`, update the plan or use `update-draft` deliberately.
+
+Assistant tokens cannot list all agents, so a receipt without an agent ID needs `--agent-id ID`
+for the verified existing agent, or `--agent-id none` only after the user checked the channel and
+confirmed there is no agent. Never infer absence from an error or an empty inaccessible list.
+`create` recovery also needs `--schedule-id none` after the user checked that no
+schedule exists. A recorded schedule attempt or success blocks recovery even with this flag:
+inspect and finish that schedule in Zira; never replay `POST /schedules/new`. Use the original
+receipt; do not edit it, use `--allow-repeat`, or combine recovery with `--resolve-pending`.
+
+A missing receipt, ambiguous channel, wrong owner, unreadable record or changed agent stops
+before recovery writes. Successful recovery retains the same receipt and IDs. `--resume` is
+also available through `zira_ai_report` args in both clients.

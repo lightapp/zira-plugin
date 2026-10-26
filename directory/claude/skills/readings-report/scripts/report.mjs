@@ -52,8 +52,45 @@ export function checkOption(option) {
   return option;
 }
 
+// Embedded pictures are PNG data URIs only (the page's CSP allows data: images and nothing else).
+export const MAX_IMAGES = 24;
+export const MAX_IMAGE_CHARS = 4_000_000;
+const MAX_SECTION_IMAGE_CHARS = 12_000_000;
+const PNG_DATA = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+
+function checkImages(images, where) {
+  if (images == null) return null;
+  if (!Array.isArray(images) || !images.length || images.length > MAX_IMAGES) throw new Error(`${where}: give 1-${MAX_IMAGES} images`);
+  let total = 0;
+  return images.map((img, i) => {
+    if (!plain(img) || typeof img.src !== "string" || img.src.length > MAX_IMAGE_CHARS || !PNG_DATA.test(img.src))
+      throw new Error(`${where}: image ${i + 1} must be a PNG data URI (data:image/png;base64,…) under ${MAX_IMAGE_CHARS / 1e6} MB`);
+    total += img.src.length;
+    if (total > MAX_SECTION_IMAGE_CHARS) throw new Error(`${where}: images are larger than ${MAX_SECTION_IMAGE_CHARS / 1e6} MB together`);
+    const width = img.width == null ? null : Math.round(Number(img.width));
+    if (width !== null && !(width >= 40 && width <= 1200)) throw new Error(`${where}: image ${i + 1} width is 40-1200 px`);
+    return { src: img.src, alt: String(img.alt ?? img.caption ?? "").slice(0, 200), caption: String(img.caption ?? "").slice(0, 200), width };
+  });
+}
+
+// A fixed table of values the report computed elsewhere (not a query over readings).
+function checkStaticTable(table, where) {
+  if (table == null) return null;
+  if (!plain(table) || !Array.isArray(table.columns) || !table.columns.length || table.columns.length > 12 || !Array.isArray(table.rows) || table.rows.length > 200)
+    throw new Error(`${where}: staticTable is {columns: [1-12 names], rows: [up to 200 rows]}`);
+  const cell = v => (v === null || v === undefined ? "" : typeof v === "number" && Number.isFinite(v) ? v : String(v).slice(0, 200));
+  return {
+    columns: table.columns.map(c => String(c).slice(0, 80)),
+    rows: table.rows.map((row, i) => {
+      if (!Array.isArray(row) || row.length !== table.columns.length) throw new Error(`${where}: staticTable row ${i + 1} needs ${table.columns.length} cells`);
+      return row.map(cell);
+    }),
+  };
+}
+
 // Spec: { title, summary?, range?: {from, to}, kpis?: [{label, query, unit?}],
-//         sections: [{ title, text?, chart?: {query, option?, height?}, table?: {query, maxRows?} }] }
+//         sections: [{ title, text?, chart?: {query, option?, height?}, table?: {query, maxRows?},
+//                      images?: [{src: PNG data URI, caption?, alt?, width?}], staticTable?: {columns, rows} }] }
 export function checkSpec(spec, metrics) {
   if (!plain(spec)) throw new Error("The report spec must be a JSON object");
   const title = String(spec.title ?? "").trim().slice(0, 140);
@@ -86,9 +123,10 @@ export function checkSpec(spec, metrics) {
     sections: sections.map((s, i) => {
       if (!plain(s) || !String(s.title ?? "").trim()) throw new Error(`Section ${i + 1} needs a title`);
       const where = `Section "${s.title}"`;
-      if (!s.chart && !s.table && !s.text) throw new Error(`${where} needs a chart, a table or text`);
+      if (!s.chart && !s.table && !s.text && !s.images && !s.staticTable) throw new Error(`${where} needs a chart, a table, text or images`);
       return {
         title: String(s.title).slice(0, 140), text: String(s.text ?? "").slice(0, 4000),
+        images: checkImages(s.images, where), staticTable: checkStaticTable(s.staticTable, where),
         chart: s.chart ? {
           query: query(s.chart.query, where), option: checkOption(s.chart.option),
           height: Math.min(900, Math.max(180, Number(s.chart.height) || 340)),
@@ -172,6 +210,8 @@ export function buildReport({ spec: rawSpec, manifest, data, generatedAt = new D
   const sectionHtml = sections.map((s, i) => `<section class="sec" id="s-${i}">
 <div class="sh"><h2>${esc(s.title)}</h2><div class="acts">${s.chart || s.table ? `<button type="button" class="b" data-csv="${i}" disabled>CSV</button><button type="button" class="b" data-sheet="${i}" disabled>Open in Sheets</button>` : ""}</div></div>
 ${s.text ? `<div class="txt">${richText(s.text)}</div>` : ""}
+${s.images ? `<div class="figs">${s.images.map(img => `<figure class="fig"><img src="${img.src}" alt="${esc(img.alt)}"${img.width ? ` width="${img.width}"` : ""}>${img.caption ? `<figcaption>${esc(img.caption)}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}
+${s.staticTable ? `<div class="wrap"><table><thead><tr>${s.staticTable.columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${s.staticTable.rows.map(r => `<tr>${r.map(c => `<td>${esc(typeof c === "number" ? formatValue(c) : c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : ""}
 ${s.chart ? `<div class="chart" id="c-${i}" style="height:${s.chart.height}px" role="img" aria-label="${esc(s.title)}"><div class="muted ph">Charts need JavaScript; the data is in the table${s.table ? " below" : " view"}.</div></div>` : ""}
 ${s.chart && !s.table ? `<details class="tv"><summary>Table view</summary><div class="wrap"><table id="t-${i}">${tableHtml(s.chart.result, 200)}</table></div></details>` : ""}
 ${s.table ? `<div class="wrap"><table id="t-${i}">${tableHtml(s.table.result, s.table.maxRows)}</table></div>` : ""}
@@ -239,6 +279,7 @@ fieldset{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 10px}le
 .wrap{overflow-x:auto;margin-top:8px}table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
 th{text-align:left;font-weight:600;color:var(--ink2);border-bottom:1px solid var(--axis);padding:5px 8px;white-space:nowrap}td{border-bottom:1px solid var(--grid);padding:5px 8px;white-space:nowrap}
 .muted{color:var(--muted)}details.tv{margin-top:6px;font-size:13px}summary{cursor:pointer;color:var(--ink2)}
+.figs{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;align-items:flex-start}.fig{margin:0;max-width:100%}.fig img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:6px}.fig figcaption{font-size:12px;color:var(--ink2);margin-top:4px;max-width:360px}
 footer{margin-top:20px;font-size:12px;color:var(--muted)}`;
 
 // Browser side: draws charts from the embedded results, then re-runs queries locally when the

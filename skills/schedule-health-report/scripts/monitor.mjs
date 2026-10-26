@@ -118,14 +118,14 @@ export function handoff(config, meta) {
     active: false, requiresHostScheduler: true,
     taskId: `zira-status-${config.monitorId}`.slice(0, 60), title: `Zira device status · ${meta.siteNames.join(", ")}`.slice(0, 80),
     description: `Zira device status check for ${where}`, ...timing,
-    prompt: `Use the Zira plugin's device-status skill to run the saved status check "${config.monitorId}": run \`node scripts/device-status.mjs run --name ${config.monitorId}\` from that skill's directory. It reads Zira and writes only local files. If it fails with a sign-in or authentication error, do not retry; say the Zira sign-in needs renewing (any Zira skill, such as getting-started, signs in again). On HTTP 429 report the retry time and the missing coverage. ${quiet ? 'If the run prints "notify": false, reply with one line saying nothing changed and stop.' : ""} Otherwise lead with cameras that went offline recently, with how long and since when; then new status warnings (low battery, camera moved or off, power off, device error, no network), saying that values without a current heartbeat are last known and need checking on site; then warnings that cleared, long-offline cameras and coverage gaps. Link each data source by its url, and give the dashboard path. Do not create tasks, change devices or share the dashboard. Always call the product Zira. Do not commit anything to any repository; this is customer production data.`,
+    prompt: `Use the Zira plugin's device-status skill to run the saved status check "${config.monitorId}": run \`node scripts/device-status.mjs run --name ${config.monitorId}\` from that skill's directory. It reads Zira and writes only local files. If it fails with a sign-in or authentication error, do not retry; say the Zira sign-in needs renewing (any Zira skill, such as getting-started, signs in again). On HTTP 429 report the retry time and the missing coverage. ${quiet ? 'If the run prints "notify": false, stay quiet and stop; do not send an unchanged-status notification.' : ""} Otherwise lead with cameras that went offline recently, with how long and since when; then new status warnings (low battery, camera moved/bumped or off, power disconnected, cellular-only, low storage, device error, no network), saying that values without a current heartbeat are last known and need checking on site; then warnings that cleared, long-offline cameras and coverage gaps. Link each data source by its url, and give the dashboard path. Do not create tasks, change devices or share the dashboard. Always call the product Zira. Do not commit anything to any repository; this is customer production data.`,
   };
   return {
     active: false, requiresHostScheduler: true,
     taskId: `zira-health-${config.monitorId}`.slice(0, 60), title: `Zira health · ${meta.siteNames.join(", ")}`.slice(0, 80),
     description: `Zira fleet health report for ${where}`,
     schedule: s, when: host.describe, hostCron: host.cron, hostZone: host.hostZone, nextRun: nextRun(s), note: host.note,
-    prompt: `Use the Zira plugin's schedule-health-report skill to run the saved health report "${config.monitorId}": run \`node scripts/monitor.mjs run --name ${config.monitorId}\` from that skill's directory. It reads Zira and writes only local files. If it fails with a sign-in or authentication error, do not retry; say the Zira sign-in needs renewing (any Zira skill, such as getting-started, signs in again). On HTTP 429 report the retry time and the missing coverage. ${quiet ? 'If the run prints "notify": false, reply with one line saying nothing changed and stop.' : ""} Otherwise lead with what needs attention: devices that went down recently with how long and since when, before long-term outages; then new findings, recoveries and coverage gaps. Link each data source by its url, and give the dashboard path. Do not create tasks, change devices or share the dashboard. Always call the product Zira. Do not commit anything to any repository; this is customer production data.`,
+    prompt: `Use the Zira plugin's schedule-health-report skill to run the saved health report "${config.monitorId}": run \`node scripts/monitor.mjs run --name ${config.monitorId}\` from that skill's directory. It reads Zira and writes only local files. If it fails with a sign-in or authentication error, do not retry; say the Zira sign-in needs renewing (any Zira skill, such as getting-started, signs in again). On HTTP 429 report the retry time and the missing coverage. ${quiet ? 'If the run prints "notify": false, stay quiet and stop; do not send an unchanged-status notification.' : ""} Otherwise lead with what needs attention: devices that went down recently with how long and since when, before long-term outages; then new findings, recoveries and coverage gaps. Link each data source by its url, and give the dashboard path. Do not create tasks, change devices or share the dashboard. Always call the product Zira. Do not commit anything to any repository; this is customer production data.`,
     instructions: "Create or update the host's scheduled job with this prompt and timing, then list it to confirm its ID and next run. This output alone schedules nothing.",
   };
 }
@@ -164,9 +164,15 @@ export function summarize({ config, report, result, previousWarnings = null }) {
   if (status) {
     const now = new Set(warnings.map(w => w.key));
     // A warning clears only when that camera still reports status without it.
-    const withStatus = new Set((report.devices ?? []).filter(d => Object.keys(d.deviceStatus?.values ?? {}).length).map(d => d.id));
+    const retiredMovement = warning => report.movement?.supportedDevices?.includes(warning.deviceKey ?? warning.key.replace(/:camera-(moved|bumped).*$/, "")) &&
+      ["camera-moved", "camera-bumped"].includes(warning.code);
+    const canClear = warning => (report.devices ?? []).some(d =>
+      `${d.deviceKey ?? `${d.siteId}:${d.id}`}:${warning.code}` === warning.key &&
+      d.deviceStatus?.freshness === "current" && d.deviceStatus.assessedCodes?.includes(warning.code));
     changes.newWarnings = previousWarnings ? warnings.filter(w => !previousWarnings.some(p => p.key === w.key)) : [];
-    changes.clearedWarnings = (previousWarnings ?? []).filter(p => !now.has(p.key) && withStatus.has(p.id));
+    changes.clearedWarnings = (previousWarnings ?? []).filter(p => !now.has(p.key) && !retiredMovement(p) && canClear(p));
+    // Carry unresolved warnings forward so a later fresh recovery is still reported.
+    for (const p of previousWarnings ?? []) if (!now.has(p.key) && !retiredMovement(p) && !canClear(p)) warnings.push({ ...p, freshness: "last-known", reporting: false });
   }
   // Checks waiting for setup (counts, trim targets) mark every run partial; only a missed
   // inventory or a failed read is a change worth a message.

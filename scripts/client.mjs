@@ -20,8 +20,12 @@ async function errorInfo(response) {
     const raw = await response.text();
     if (raw.length > 64 * 1024) return {};
     const body = JSON.parse(raw);
-    const code = typeof body?.internalErrorCode === "string" && /^[A-Z0-9_-]{1,20}$/i.test(body.internalErrorCode) ? body.internalErrorCode : undefined;
-    return { code, details: code && typeof body.details === "string" ? body.details : undefined };
+    const candidate = body?.error?.code ?? body?.internalErrorCode;
+    const code = typeof candidate === "string" && /^[A-Z0-9_-]{1,64}$/i.test(candidate) ? candidate : undefined;
+    // Admission errors are deliberately sanitized by the backend. Do not expose arbitrary
+    // legacy SQL messages; legacy details remain available for the P0001 attachment flow.
+    const message = code && typeof body?.error?.message === "string" ? text(body.error.message, 500) : undefined;
+    return { code, message, details: code && typeof body.details === "string" ? body.details : undefined };
   } catch {
     return {};
   }
@@ -233,8 +237,9 @@ const describeCreated = created => Object.entries(created).map(([k, v]) => `${k}
 // `partial` means some records of a multi-step write exist. Repeats get their own slot so
 // the original receipt survives.
 export async function guardedWrite({
-  file, key, summary, allowRepeat = false, reconcile, precheck, run, resolve, resolveField = "recordId", links = () => ({}),
+  file, key, summary, allowRepeat = false, reconcile, precheck, run, resolve, resolveField = "recordId", links = () => ({}), resume,
 }) {
+  if (resume && (resolve !== undefined || allowRepeat)) throw new Error("Resume cannot be combined with resolve-pending or allow-repeat");
   return withActionLock(file, async () => {
     const store = await readJson(file, { version: 1, actions: {} });
     if (store.version !== 1 || typeof store.actions !== "object") throw new Error("Unsupported receipts file");
@@ -255,9 +260,14 @@ export async function guardedWrite({
       } else throw new Error("Resolve with none or the ID of the record found in Zira");
     }
     if (prior?.state === "done") return { state: "already-done", receipt: prior };
-    if (prior?.state === "partial")
+    // Only an opted-in domain recovery may continue a partial operation. It must inspect
+    // the existing records read-only, under the same lock, before returning a seed.
+    if (resume && !["partial", "pending"].includes(prior?.state))
+      throw new Blocked("missing_receipt", "No unfinished receipt matches this action; nothing was written.");
+    const seed = resume ? await resume(structuredClone(prior)) : undefined;
+    if (prior?.state === "partial" && !resume)
       throw new Blocked("partial_write", "A previous attempt created only part of this setup. Finish or remove those records in Zira; nothing new was written.", { receipt: prior, ...links(prior.created ?? {}) });
-    if (prior?.state === "pending") {
+    if (prior?.state === "pending" && !resume) {
       const found = reconcile ? await reconcile(prior) : null;
       if (!found)
         throw new Blocked("uncertain_write", "A previous attempt of this exact write has an unknown outcome and Zira shows no single matching record. Check Zira, then resolve it; nothing new was written.", { receipt: prior });
@@ -269,8 +279,9 @@ export async function guardedWrite({
       return { state: "reconciled", receipt: store.actions[slot] };
     }
     // Duplicate checks run only for a fresh write; what they saw helps a later reconcile.
-    const checked = await precheck?.();
-    const entry = { state: "pending", at: new Date().toISOString(), summary, created: {}, ...(checked ? { precheck: checked } : {}) };
+    const checked = resume ? undefined : await precheck?.();
+    const entry = resume ? { ...prior, state: "pending", resumedAt: new Date().toISOString() }
+      : { state: "pending", at: new Date().toISOString(), summary, created: {}, ...(checked ? { precheck: checked } : {}) };
     store.actions[slot] = entry;
     await save();
     // Multi-step writes record each created record as soon as it exists.
@@ -279,12 +290,12 @@ export async function guardedWrite({
       await save();
     };
     try {
-      const result = await run(progress);
+      const result = await run(progress, seed);
       Object.assign(entry, { state: result.partial ? "partial" : "done", doneAt: new Date().toISOString() }, result.receipt ?? {});
       await save();
       return { state: result.partial ? "partial" : "created", ...result };
     } catch (error) {
-      const madeSomething = Object.keys(entry.created).length > 0;
+      const madeSomething = Object.keys(entry.created).some(key => key !== "pendingWrite");
       if (!madeSomething) {
         if (definiteFailure(error)) delete store.actions[slot];
         else Object.assign(entry, { failure: error.message });

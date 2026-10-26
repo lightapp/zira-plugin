@@ -363,6 +363,11 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
         truth, problems = read_labels(item.label, count)
         if problems:
             label_problems.append({"image": item.name, "problems": problems[:20]})
+        scores = (reference.get("deviceScores") or {}).get(item.name) if reference else None
+        if isinstance(scores, list) and len(scores) == len(truth) and not problems:
+            for box, score in zip(truth, scores):
+                if isinstance(score, (int, float)):
+                    box["deviceScore"] = float(score)
         out = model.predict(item.image, confidence=float(request["confidence"]), nms_iou=float(request["nmsIou"]))
         predictions = [p for p in out.boxes if 0 <= p["classId"] < count]
         pre_ms.append(out.preprocess_ms)
@@ -441,6 +446,9 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
                      "device also made, and recall the share of the device's detections this model found."),
             "labelSources": {k: sum(1 for r in images if r.get("labelSource") == k) for k in sorted(by_source)},
             "summaryBySource": {k: rates(*comparable_totals(table)) for k, table in sorted(by_source.items())},
+            # Device labels with the camera's own confidence (from the frames' inspection records).
+            "deviceScores": {"labels": sum(1 for r in images for t in r["truth"] if "deviceScore" in t),
+                             "deviceLabels": sum(len(r["truth"]) for r in images if r.get("labelSource") == "device")},
         }} if reference else {}),
         # Misses and false positives first, so review starts with the errors.
         "images": sorted(images, key=lambda r: (-(r["fp"] + r["fn"]), r["image"])),

@@ -10,7 +10,9 @@ be run on frames they were never trained on.
 Labels come from the reviewer's correction when there is one (it wins even when empty, as in
 zira-web), otherwise from the device output. Device output is what the running models predicted, not
 verified truth, so every dataset records which source each image used (`zira-reference.json`), and the
-evaluator reports agreement with the device rather than accuracy for those images.
+evaluator reports agreement with the device rather than accuracy for those images. Where a frame's
+`inspections/` record lists the device's detections with scores, the sidecar keeps the camera's
+confidence for each device label line (`deviceScores`).
 """
 
 from __future__ import annotations
@@ -49,6 +51,45 @@ def reference_for(folder: Path, stem: str, mode: str) -> tuple[str | None, str |
     if mode in ("auto", "device") and device.is_file():
         return device.read_text(), "device"
     return None, None
+
+
+INSPECTION_DETECTIONS = ("snapshotAnnotations", "snapshotNailAnnotations")
+SCORE_TOLERANCE = 1e-5  # label files round the device's boxes to 6 decimals
+
+
+def device_scores(folder: Path, stem: str, names: list[str], boxes: list[tuple]) -> list[float | None]:
+    """The camera's confidence for each device label box, from the frame's inspection record.
+
+    Inspections list the device models' detections (`xywh-top-left`, normalized) with a score; the
+    label file is the same boxes as YOLO centres. Not every inspection carries them, so a box
+    without a same-class detection at the same place gets None."""
+    try:
+        inspection = json.loads((folder / "inspections" / f"{stem}.json").read_text())
+    except (FileNotFoundError, ValueError):
+        return [None] * len(boxes)
+    holder = inspection.get("standalone") if isinstance(inspection, dict) else None
+    detections = []
+    for record in (holder, inspection):
+        if not isinstance(record, dict):
+            continue
+        for key in INSPECTION_DETECTIONS:
+            found = record.get(key)
+            listed = found.get("detections") if isinstance(found, dict) else None
+            for d in listed if isinstance(listed, list) else []:
+                try:
+                    detections.append((str(d["label"]), float(d["x"]) + float(d["w"]) / 2, float(d["y"]) + float(d["h"]) / 2,
+                                       float(d["w"]), float(d["h"]), float(d["score"])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        if detections:
+            break
+    scores = []
+    for class_id, x, y, w, h in boxes:
+        name = names[class_id] if 0 <= class_id < len(names) else None
+        score = next((d[5] for d in detections if d[0] == name and abs(d[1] - x) <= SCORE_TOLERANCE and abs(d[2] - y) <= SCORE_TOLERANCE
+                      and abs(d[3] - w) <= SCORE_TOLERANCE and abs(d[4] - h) <= SCORE_TOLERANCE), None)
+        scores.append(round(score, 4) if score is not None else None)
+    return scores
 
 
 def read_marks(folder: Path, stem: str) -> list[dict]:
@@ -114,6 +155,9 @@ def process_frame(job: dict) -> dict:
     marks = read_marks(folder, stem)
     if marks:
         record["marks"] = sorted({c for m in marks for c in m["categories"]})
+    # Camera confidence per label box; reviewer corrections are not the device's, so they get none.
+    scores = device_scores(folder, stem, job["names"], boxes) if source == "device" else [None] * len(boxes)
+    record["deviceScores"] = {}
 
     for output, size in (("pallets", job["palletSize"]), ("geometry", job["geometrySize"])):
         if output not in roots:
@@ -121,13 +165,17 @@ def process_frame(job: dict) -> dict:
         name = f"{stem}{suffix}"
         slices.save_image(slices.render_stretched(frame, size), roots[output] / split / "images" / name, suffix)
         mapping = {int(k): v for k, v in maps[output].items()}
-        (roots[output] / split / "labels" / f"{stem}.txt").write_text(slices.remap_yolo_text(text, mapping))
+        written = slices.remap_yolo_text(text, mapping)
+        (roots[output] / split / "labels" / f"{stem}.txt").write_text(written)
+        kept = [s for box, s in zip(boxes, scores) if box[0] in mapping]
+        if any(s is not None for s in kept) and len(kept) == len(slices.parse_yolo(written)):
+            record["deviceScores"][f"{output}:{name}"] = kept
 
     if "nails" in roots:
         boards_ids, stringer_ids = set(job["boardIds"]), set(job["stringerIds"])
         nail_map = {int(k): v for k, v in maps["nails"].items()}
-        boards, stringers, nails = [], [], []
-        for box in boxes:
+        boards, stringers, nails, nail_scores = [], [], [], []
+        for box, score in zip(boxes, scores):
             region = slices.yolo_to_pixel(box, width, height)
             if box[0] in boards_ids:
                 boards.append(region)
@@ -135,6 +183,7 @@ def process_frame(job: dict) -> dict:
                 stringers.append(region)
             if box[0] in nail_map:
                 nails.append((nail_map[box[0]], region))
+                nail_scores.append((region, score))
         pieces = slices.compute_slices(boards, stringers, width, height, job["padding"], job["nailCropSize"], job["maxSlices"])
         record["slices"] = []
         for piece in pieces:
@@ -142,6 +191,11 @@ def process_frame(job: dict) -> dict:
             slices.save_image(slices.render_slice(frame, piece), roots["nails"] / split / "images" / name, suffix)
             labels = slices.slice_labels(nails, piece)
             (roots["nails"] / split / "labels" / f"{stem}__{piece.id}.txt").write_text(slices.format_yolo(labels))
+            # slice_labels keeps the nails that overlap the crop, in order; the same test lines the scores up.
+            bounds = slices.Region(piece.crop.left, piece.crop.top, piece.crop.left + piece.crop.width, piece.crop.top + piece.crop.height)
+            kept = [s for region, s in nail_scores if slices.intersect(region, bounds) is not None]
+            if any(s is not None for s in kept) and len(kept) == len(labels):
+                record["deviceScores"][f"nails:{name}"] = kept
             entry = {"id": piece.id, "image": name, "crop": [piece.crop.left, piece.crop.top, piece.crop.width, piece.crop.height],
                      "scale": piece.scale, "content": [piece.scaled_width, piece.scaled_height],
                      "pad": [piece.pad_left, piece.pad_top], "boxes": len(labels)}
@@ -218,7 +272,7 @@ def prepare(sessions: list[str], out: str, name: str, outputs: list[str], split:
                 raise EvalError(f"frame {image.name} is in both {seen[image.stem]} and {session_id(folder)}")
             seen[image.stem] = session_id(folder)
             frames.append((folder, image))
-    base = {"roots": {k: str(v) for k, v in staging.items()}, "split": split, "reference": reference,
+    base = {"roots": {k: str(v) for k, v in staging.items()}, "split": split, "reference": reference, "names": names,
             "maps": {k: {str(s): d for s, d in v[1].items()} for k, v in plan.items()},
             "boardIds": sorted(slices.source_ids(names, slices.BOARD_SOURCE_NAMES)),
             "stringerIds": sorted(slices.source_ids(names, slices.STRINGER_SOURCE_NAMES)),
@@ -263,6 +317,12 @@ def prepare(sessions: list[str], out: str, name: str, outputs: list[str], split:
                    "note": "Labels are reviewer corrections where present, otherwise the device models' own output (unverified).",
                    "labelSources": {s: sum(1 for v in items.values() if v == s) for s in ("annotations", "device")},
                    "images": items}
+        # The camera's confidence per label line, for images whose inspection carried one.
+        prefix = f"{output}:"
+        scored = {f"{split}/images/{key[len(prefix):]}": values for r in used
+                  for key, values in r.get("deviceScores", {}).items() if key.startswith(prefix)}
+        if scored:
+            sidecar["deviceScores"] = scored
         if output == "nails":
             sidecar["slices"] = {f"{split}/images/{s['image']}": {"frame": r["image"], "session": r["session"], **s}
                                  for r in used for s in r.get("slices", [])}
@@ -271,7 +331,7 @@ def prepare(sessions: list[str], out: str, name: str, outputs: list[str], split:
             shutil.rmtree(final)
         os.replace(stage, final)
         result["outputs"][output] = {"path": str(final), "images": len(items), "classes": plan[output][0],
-                                     "labelSources": sidecar["labelSources"]}
+                                     "labelSources": sidecar["labelSources"], "imagesWithDeviceScores": len(scored)}
     if "nails" in outputs:
         marked = sum(1 for r in used for s in r.get("slices", []) if s.get("marks"))
         result["outputs"]["nails"].update(frames=len(used), markedSlices=marked)

@@ -2,7 +2,8 @@
 // Validate Trimsaw Sizes: checks one trimsaw data source's stop buckets, uncut boards and pre-cut
 // lengths over a time window and builds an interactive report. It reuses the readings-report cache,
 // query engine, page and helper. It writes only to this computer: a derived copy of the dataset
-// (rescaled pre-cut, outcome, trim and stop columns) and the HTML report. Nothing is written to Zira.
+// (rescaled pre-cut, outcome, trim and stop columns) and the HTML report. `scene` compares the
+// camera's raw recordings (scene.mjs) to show whether its view moved. Nothing is written to Zira.
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -17,6 +18,7 @@ import { neighboringStops, deriveNeighborColumns, neighborSections } from "./nei
 import {
   DISTANCE_BANDS, TOLERANCES, compareFits, distanceBand, formatComparison, nearestStop, parseCalibrations, parsePairs, sizeFit, stopRefs, wquantile,
 } from "./size-fit.mjs";
+import { PER_DAY, scene, sceneSection, sceneSetup } from "./scene.mjs";
 
 export { wquantile };
 
@@ -24,10 +26,14 @@ const HELP = `Validate Trimsaw Sizes — stop buckets, uncut boards and pre-cut 
 node scripts/trimsaw-sizes.mjs windows --company-id ID --site-id ID --device-id ID --from ISO [--to ISO]
 node scripts/trimsaw-sizes.mjs check --dataset ID --from LOCAL --to LOCAL [--merge auto|none|A=B,...] [--calibration 42=41.7,...]
 node scripts/trimsaw-sizes.mjs report --dataset ID --from LOCAL --to LOCAL [--merge auto|none|A=B,...] [--calibration …]
-    [--factor none|auto|F|F,F2@LOCAL] [--title TEXT] [--serve]
+    [--factor none|auto|F|F,F2@LOCAL] [--title TEXT] [--scene SCENE.json] [--serve]
 node scripts/trimsaw-sizes.mjs compare --dataset ID --from LOCAL --to LOCAL [--calibration …] [--merge …] [--label TEXT]
     --vs-from LOCAL --vs-to LOCAL [--vs-dataset ID] [--vs-calibration …] [--vs-merge …] [--vs-label TEXT]
     [--pair 42.3=40,...] [--format json|text]
+node scripts/trimsaw-sizes.mjs scene --data-source-id ID --from DAY [--to DAY] [--names A,B | --per-day N] [--reference NAME]
+    [--stops JSON] [--in-per-px F] [--stop-side TOP|BOTTOM|LEFT|RIGHT] [--out DIR] [--confirm] [--list]
+node scripts/trimsaw-sizes.mjs scene --files A.mp4,B.mp4 [--reference NAME] [--stops JSON] [--in-per-px F] [--stop-side …] [--out DIR]
+node scripts/trimsaw-sizes.mjs scene-setup [--confirm]
 Common: --profile prod|integ
 
 windows fetches the source's readings (cached by readings-report) and lists production periods,
@@ -42,6 +48,17 @@ windows (old and new stops, or two sources with --vs-dataset) side by side; --pa
 stops and --format text prints a table. report writes a derived dataset under $ZIRA_TRIMSAW_HOME (default:
 next to the readings cache) and the report; --serve hands it out on 127.0.0.1 like readings-report.
 LOCAL times are site time such as 2026-10-09T10:00. --factor none keeps Zira's pre-cut values.
+scene shows whether the camera's view moved between its raw recordings in Zira (read-only listing,
+one request per day; DAY is site-local YYYY-MM-DD, --to defaults to today). By default it takes the
+first recording of each recording window (clips of one session under 15 minutes apart, split hourly),
+up to --per-day (${PER_DAY}) per day spread over it and 16 in all; --names picks clips, --list only
+shows the choice. Clips download into a private cache (over 1 GB needs --confirm), a median-of-frames
+snapshot of each is matched to the reference (the earliest unless --reference) on steady details,
+and the shift along the stop axis of the 320 px analysis frame is given per clip: steady, camera
+turned, part of the view moved or uncertain. --stops {"42":126.9,…} (analysis px) and --in-per-px give shifts at the stops and in
+inches; the side is read from the stops or --stop-side. It writes scene.json and PNGs (owner-only)
+under $ZIRA_TRIMSAW_SCENE_HOME (default ~/.cache/zira/trimsaw-scene) or --out; report --scene adds
+them to the report. scene-setup shows the Python runtime it needs; --confirm installs it (ask first).
 Exit 0 success, 2 invalid/failed, 3 incomplete, 4 blocked (JSON explains).
 `;
 
@@ -480,7 +497,7 @@ export function summaryText({ s, merges, scale, schedule, unit, window }) {
 const bars = (cols, x) => cols.map(c => ({ type: "bar", stack: "s", encode: { x, y: c } }));
 const sumOf = (id, name) => ({ metric: id, op: "sum", label: name });
 
-export function buildSpec({ title, window, stops, unit, s, merges, schedule, summary, neighbors = { pairs: [], labels: [], omitted: 0 }, names = { avgPost: "Average Postcut Length", postcut: "Postcut Length" } }) {
+export function buildSpec({ title, window, stops, unit, s, merges, schedule, summary, neighbors = { pairs: [], labels: [], omitted: 0 }, names = { avgPost: "Average Postcut Length", postcut: "Postcut Length" }, scene = null }) {
   const shown = stops.slice(0, MAX_STOPS);
   const u = unit || "length";
   const cutCols = shown.map((x, k) => ({ id: cutId(k), name: `Cut to ${label(x.stop)}` }));
@@ -550,6 +567,11 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
         { metric: D.precut, op: "p10", label: "Pre-cut p10" }, { metric: D.precut, op: "median", label: "Pre-cut median" }, { metric: D.precut, op: "p90", label: "Pre-cut p90" },
         { metric: D.trim, op: "median", label: "Trim median" }, { metric: M.avgPost, op: "median", label: "Postcut median (raw)" }] } } },
   ];
+  // The camera-view section sits right after the drift chart, whose steps it can explain.
+  if (scene) {
+    const drift = sections.findIndex(x => x.title.startsWith("Drift:"));
+    sections.splice(drift < 0 ? sections.length : drift + 1, 0, scene);
+  }
   sections.push(...neighborSections(neighbors, { target: M.target, units: M.units, avgPost: M.avgPost,
     outcome: D.outcome, avgPostName: names.avgPost, unit }));
   return {
@@ -663,10 +685,11 @@ export async function compare({ datasetId, profile, from, to, merge, calibration
     rows: compareFits(a.fit, b.fit, { pairs }) };
 }
 
-export async function report({ datasetId, profile, from: f, to: t, merge = "auto", factor = "none", calibration, title, serve = false,
+export async function report({ datasetId, profile, from: f, to: t, merge = "auto", factor = "none", calibration, title, serve = false, scene: sceneFile,
   root = home(), trimsawRoot = derivedHome(process.env, root), idleMinutes = 120, now = new Date(), env = process.env }) {
   const { from, to, window } = windowArgs(f, t);
   const calibrations = parseCalibrations(calibration);
+  const view = sceneFile ? await sceneSection(sceneFile) : null; // read first: a bad --scene fails before any work
   const { manifest, source, device } = await loadSource({ datasetId, profile, root });
   const rows = boardRows(device).filter(r => r.t >= from && r.t < to);
   if (!rows.length) throw new Error("No boards in that window; pick another window with the windows command");
@@ -705,13 +728,13 @@ export async function report({ datasetId, profile, from: f, to: t, merge = "auto
 
   const data = await loadDataset(derived, { root: trimsawRoot });
   const s = { ...summarize(data.devices[0], { from, to, stops }), fit: sizeFit(fitBoards(rows, merges), { calibrations }) };
-  const summary = summaryText({ s, merges, scale, schedule, unit, window });
+  const summary = [summaryText({ s, merges, scale, schedule, unit, window }), ...(view ? ["", ...view.summaryLines] : [])].join("\n");
   const metricName = (id, fallback) => source.metrics.find(m => m.id === id)?.name ?? fallback;
   const names = { avgPost: metricName(M.avgPost, "Average Postcut Length"), postcut: metricName(M.postcut, "Postcut Length") };
-  const spec = buildSpec({ title: title ?? `${source.name.trim()} — stop sizes and pre-cut`, window, stops, unit, s, merges, schedule, summary, names, neighbors });
+  const spec = buildSpec({ title: title ?? `${source.name.trim()} — stop sizes and pre-cut`, window, stops, unit, s, merges, schedule, summary, names, neighbors, scene: view?.section ?? null });
   const written = await writeReport({ spec, manifest: derived, root: trimsawRoot, now });
   const out = { ...written, kind: "trimsaw-report", dataset: derivedId, sourceDataset: manifest.id, window, relabels: merges, scale,
-    factor: schedule, numbers: s, neighbors, source: { id: source.id, name: source.name, url: source.url } };
+    factor: schedule, numbers: { ...s, ...(view ? { scene: view.summary } : {}) }, neighbors, source: { id: source.id, name: source.name, url: source.url } };
   if (serve) {
     const helper = await serveDetached({ report: written.path, profile: manifest.profile, idleMinutes, root: trimsawRoot,
       env: { ...env, ZIRA_READINGS_HOME: trimsawRoot } });
@@ -728,7 +751,9 @@ export async function main(args = process.argv.slice(2)) {
     factor: { type: "string" }, title: { type: "string" }, serve: { type: "boolean" }, calibration: { type: "string" },
     label: { type: "string" }, "vs-dataset": { type: "string" }, "vs-from": { type: "string" }, "vs-to": { type: "string" },
     "vs-merge": { type: "string" }, "vs-calibration": { type: "string" }, "vs-label": { type: "string" }, pair: { type: "string" },
-    format: { type: "string" },
+    format: { type: "string" }, scene: { type: "string" }, "data-source-id": { type: "string" }, names: { type: "string" },
+    "per-day": { type: "string" }, reference: { type: "string" }, stops: { type: "string" }, "in-per-px": { type: "string" },
+    "stop-side": { type: "string" }, out: { type: "string" }, confirm: { type: "boolean" }, list: { type: "boolean" }, files: { type: "string" },
   } });
   const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
   const log = message => process.stderr.write(`${message}\n`);
@@ -741,7 +766,12 @@ export async function main(args = process.argv.slice(2)) {
       return check({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto", calibration: o.calibration });
     case "report":
       return report({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto", factor: o.factor ?? "none",
-        calibration: o.calibration, title: o.title, serve: !!o.serve });
+        calibration: o.calibration, title: o.title, serve: !!o.serve, scene: o.scene });
+    case "scene":
+      return scene({ dataSourceId: o["data-source-id"], from: o.from, to: o.to, names: o.names, perDay: o["per-day"], reference: o.reference,
+        stops: o.stops, inPerPx: o["in-per-px"], stopSide: o["stop-side"], out: o.out, confirm: !!o.confirm, list: !!o.list, files: o.files, profile });
+    case "scene-setup":
+      return sceneSetup({ confirm: !!o.confirm });
     case "compare": {
       if (![undefined, "json", "text"].includes(o.format)) throw new Error("--format is json or text");
       const result = await compare({ datasetId: o.dataset, profile, from: o.from, to: o.to, merge: o.merge ?? "auto", calibration: o.calibration,

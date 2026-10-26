@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { movementWindow, reviewMovement, loadMovementLedger, acknowledgeMovement } from "../../health-report/scripts/movement.mjs";
 // Device Status: basic camera health for chosen sites (online, battery, temperature, camera,
 // network, power, errors) without count or trim checks. Runs the health-report engine in its
 // status mode and reuses the health monitor for schedules. Reads Zira; writes only local files.
@@ -17,6 +18,8 @@ export const DEFAULT_BATTERY_MIN = 20;
 const HELP = `Device Status — basic status of every Zira camera at chosen sites
 node scripts/device-status.mjs sites --company-id ID
 node scripts/device-status.mjs check --company-id ID --site-ids A,B|all [--battery-min 20] [--freshness 30]
+node scripts/device-status.mjs movement --company-id ID --site-ids A,B|all [--days 7 | --from ISO --to ISO]
+node scripts/device-status.mjs acknowledge --company-id ID --report FILE --incident-ids ID,ID --note "Reviewed mount" [--apply]
 node scripts/device-status.mjs schedule --name NAME --company-id ID --site-ids A,B|all
     --frequency daily|weekdays|weekly [--day mon] --time HH:MM --timezone IANA
     [--delivery changes-only|all-runs] [--battery-min 20] [--freshness 30] [--replace]
@@ -80,9 +83,9 @@ export function digest(report, warnings) {
 }
 
 export async function check({ get, profile = "prod", companyId, siteIds, battery = DEFAULT_BATTERY_MIN, freshness = 30,
-  home = monitor.reportsHome(), engine, spawnImpl }) {
+  home = monitor.reportsHome(), engine, spawnImpl, movementRange }) {
   const { chosen, names } = await authorizedSites(get, String(companyId), siteIds, profile);
-  const key = scopeKey(String(companyId), chosen);
+  const key = scopeKey(String(companyId), chosen) + (movementRange ? "-movement" : "");
   const out = path.join(home, key);
   const f = { config: path.join(out, "config.json"), state: path.join(out, "state.json"), warnings: path.join(out, "warnings.json") };
   const config = {
@@ -94,6 +97,18 @@ export async function check({ get, profile = "prod", companyId, siteIds, battery
     await writePrivate(f.config, config);
     const ran = await monitor.runEngine({ configFile: f.config, out, state: f.state, profile, engine, spawnImpl });
     if (ran.blocked) return { ...ran.blocked, complete: false };
+    const ledger = await loadMovementLedger(profile, String(companyId), home);
+    reviewMovement(ran.report, null, { ledger, ...(movementRange ? { window: movementRange } : {}) });
+    await writePrivate(path.join(out, "report.json"), ran.report);
+    // A movement-only report has a separate folder/window and cannot perturb the normal monitor state.
+    if (movementRange) {
+      const { movementHtml } = await import("../../health-report/scripts/movement-page.mjs");
+      await writePrivate(path.join(out, "report.html"), movementHtml(ran.report));
+      return { kind: "camera-movement-check", companyId: String(companyId), sites: names,
+        report: path.join(out, "report.json"), dashboard: path.join(out, "report.html"), ...ran.report.movement,
+        inventoryComplete: ran.report.inventoryComplete, errors: ran.report.errors,
+        complete: ran.report.inventoryComplete && !ran.report.errors?.length && !ran.report.movement.coverageGaps.length };
+    }
     const previousWarnings = await readJson(f.warnings, null);
     const s = monitor.summarize({ config, report: ran.report, result: ran.result, previousWarnings });
     await writePrivate(f.warnings, s.warnings);
@@ -115,6 +130,8 @@ export async function main(args = process.argv.slice(2)) {
   if (!args.length || ["help", "--help", "-h"].includes(args[0])) { process.stdout.write(HELP); return; }
   const { values: o } = parseArgs({ args: args.slice(1), options: {
     profile: { type: "string" }, name: { type: "string" }, "company-id": { type: "string" }, "site-ids": { type: "string" },
+    days: { type: "string" }, from: { type: "string" }, to: { type: "string" },
+    report: { type: "string" }, "incident-ids": { type: "string" }, note: { type: "string" }, apply: { type: "boolean" },
     frequency: { type: "string" }, day: { type: "string" }, time: { type: "string" }, timezone: { type: "string" },
     delivery: { type: "string" }, freshness: { type: "string" }, "battery-min": { type: "string" }, replace: { type: "boolean" },
   } });
@@ -125,6 +142,13 @@ export async function main(args = process.argv.slice(2)) {
     case "check":
       return check({ get: await liveClient(profile), profile, companyId: o["company-id"], siteIds: siteIds(),
         battery: batteryMinimum(o["battery-min"]), freshness: freshnessOption(o.freshness) });
+    case "movement": {
+      const range = movementWindow({ days: o.days === undefined ? 7 : Number(o.days), from: o.from, to: o.to });
+      return check({ get: await liveClient(profile), profile, companyId: o["company-id"], siteIds: siteIds(), movementRange: range });
+    }
+    case "acknowledge":
+      return acknowledgeMovement({ report: await readJson(o.report), profile, companyId: o["company-id"],
+        incidentIds: o["incident-ids"]?.split(","), note: o.note, apply: !!o.apply });
     case "schedule": {
       if (o.delivery && !["changes-only", "all-runs"].includes(o.delivery)) throw new Error("--delivery is changes-only or all-runs");
       const made = await monitor.create({ get: await liveClient(profile), profile, name: o.name, companyId: o["company-id"], siteIds: siteIds(),

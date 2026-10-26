@@ -14,7 +14,7 @@ Every write helper previews by default and changes nothing. Show the preview in 
 
 - `created`: written and read back. Give the returned links.
 - `unverified`: Zira accepted the write, but reading it back failed or did not match (`readBack`, `verified` or `warnings` say what). Give the link and ask the user to check it. Do not create it again; a rerun returns `already-done`.
-- `partial`: a multi-step setup stopped midway. Say exactly what exists (links), what failed, and that it must be finished or removed in Zira. Do not rerun.
+- `partial`: a multi-step setup stopped midway. AI reports can use the explicitly reviewed `draft/create --resume` flow in [schedule-ai-report](../skills/schedule-ai-report/SKILL.md); other actions retain the rule below. Say exactly what exists (links), what failed, and that it must be finished or removed in Zira. Do not rerun.
 - `already-done` / `reconciled`: this exact write happened earlier (or the user resolved it); nothing new was written. Share the existing record.
 
 A local receipt (`action-receipts.json` beside the Zira sign-in configuration, or `--receipts FILE`, `ZIRA_STATE_DIR`) prevents duplicate writes after retries. Never delete or edit it to force a retry. `--allow-duplicate` (same-name records) and `--allow-repeat` (an identical earlier write) are only for a user who explicitly wants a second, separate record; a repeat keeps the original receipt.

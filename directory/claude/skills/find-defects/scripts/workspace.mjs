@@ -66,7 +66,8 @@ export function createWorkspace({ deviceId, profile = "prod", origin, env = proc
     const runtime = await runtimeStatus({ env });
     const formats = runtime.runtime?.ready ? runtime.runtime.models : [".tflite"];
     const runnable = models.filter(m => formats.some(f => m.name.toLowerCase().endsWith(f)));
-    const value = { camera, versions, models: runnable, targets, sessions };
+    // web: where the page opens a session frame in Zira's image review.
+    const value = { camera, web: origin, versions, models: runnable, targets, sessions };
     cached = { at: now(), value };
     return value;
   }
@@ -81,10 +82,16 @@ export function createWorkspace({ deviceId, profile = "prod", origin, env = proc
     const targets = [...new Set((Array.isArray(request?.targets) ? request.targets : [request?.target]).filter(t => typeof t === "string" && t))];
     if (!targets.length) throw Object.assign(new Error("Choose what you are looking for."), { status: 400 });
     const opts = await options();
-    const model = opts.models.find(m => m.id === String(modelId ?? ""));
-    if (!model) throw Object.assign(new Error("Choose one of the models offered."), { status: 400 });
-    const unknown = targets.filter(t => !model.labels.includes(t));
-    if (unknown.length) throw Object.assign(new Error(`${model.name} was not trained with ${unknown.join(", ")}; choose a model that was.`), { status: 400 });
+    if (request.modelIds !== undefined && !Array.isArray(request.modelIds)) throw Object.assign(new Error("Models must be a list."), {status: 400});
+    const modelIds = [...new Set(request.modelIds ?? [modelId])];
+    if (!modelIds.length || modelIds.length > 5) throw Object.assign(new Error("Choose one to five models."), {status: 400});
+    const models = modelIds.map(key => opts.models.find(m => m.id === String(key ?? "")));
+    if (models.some(m => !m)) throw Object.assign(new Error("Choose one of the models offered."), {status: 400});
+    for (const model of models) {
+      const unknown = targets.filter(t => !model.labels.includes(t));
+      if (unknown.length) throw Object.assign(new Error(`${model.name} was not trained with ${unknown.join(", ")}; choose a model that was.`), {status: 400});
+    }
+    const model = models[0];
     const words = targets.map(plural).join(" and ");
     let version = null, sessionIds = null;
     if (source?.kind === "version") {
@@ -122,14 +129,19 @@ export function createWorkspace({ deviceId, profile = "prod", origin, env = proc
             return;
           }
           step("Cutting the frames into nail slices");
-          const prepared = await prepare({ deviceId: String(deviceId), sessions: sessionIds, outputs: "nails", replace: true, env, log: step });
+          const prepared = await prepare({ deviceId: String(deviceId), sessions: sessionIds, outputs: "nails", name: `review-${running.id}`, replace: false, env, log: step });
           dataset = prepared.outputs.nails.path;
         }
-        step(`Looking for ${words} with ${model.name}`);
-        const result = await scan({ dataset, model: modelFile.path, target: targets.join(","), deviceId: String(deviceId), env, log: step });
+        const results = [];
+        for (const [index, selected] of models.entries()) {
+          const file = index === 0 ? modelFile : await getFile({call, deviceId: selected.deviceId, fileId: selected.id, origin, env});
+          step(`Looking for ${words} with ${selected.name}`);
+          results.push(await scan({ dataset, model: file.path, target: targets.join(","), deviceId: String(deviceId), env, log: step }));
+        }
+        const result = results[0];
         running.run = result.run;
-        running.message = `${result.totals.toReview} slices to review, with ${result.totals.candidateBoxes} possible ${words}.`;
-        await onDone(result.run);
+        running.message = `${result.totals.toReview} slices to review, with ${result.totals.candidateBoxes} possible ${words}.` + (results.length > 1 ? ` Comparing ${results.length} models.` : "");
+        await onDone(result.run, results.slice(1).map(r => r.run));
         running.state = "done";
       } catch (error) {
         running.state = "failed";

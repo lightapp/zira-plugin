@@ -8,7 +8,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
 
-import { contentRect, galleryOrder } from "./gallery.mjs";
+import { contentRect, galleryKeys, galleryOrder } from "./gallery.mjs";
 
 const MAX_BODY = 16384;
 const TYPES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".bmp": "image/bmp" };
@@ -152,17 +152,22 @@ export async function startReview({ run: runDir, compareRuns = [], workspace = n
     const target = current, { items, labels, run } = target;
     const item = items[wanted?.index];
     if (!item) throw bad("Unknown slice");
-    const key = String(wanted.box ?? "");
-    const isCandidate = /^\d+$/.test(key) && Number(key) < item.candidates.length;
-    const isReference = /^r\d+$/.test(key) && Number(key.slice(1)) < item.truth.length;
-    const isOther = /^m\d+$/.test(key) && Number(key.slice(1)) < (item.others?.length ?? 0); // the model's other detections
-    // A slice without boxes (a reviewer's mark, nothing found) can only be dismissed or marked unsure.
-    const isSlice = key === "slice" && !item.candidates.length && !item.truth.length && !item.others?.length;
-    if (!isCandidate && !isReference && !isOther && !isSlice) throw bad("Unknown box");
+    // One box from the image view, or several at once when the gallery marks a whole image.
+    const keys = Array.isArray(wanted.boxes) ? wanted.boxes.map(String) : [String(wanted.box ?? "")];
+    const kindOf = key => {
+      if (/^\d+$/.test(key) && Number(key) < item.candidates.length) return "candidate";
+      if (/^r\d+$/.test(key) && Number(key.slice(1)) < item.truth.length) return "reference";
+      if (/^m\d+$/.test(key) && Number(key.slice(1)) < (item.others?.length ?? 0)) return "other"; // the model's other detections
+      // A slice without boxes (a reviewer's mark, nothing found) can only be dismissed or marked unsure.
+      if (key === "slice" && !item.candidates.length && !item.truth.length && !item.others?.length) return "slice";
+      return null;
+    };
+    const kinds = keys.map(kindOf);
+    if (!keys.length || keys.length > 1000 || kinds.includes(null)) throw bad("Unknown box");
     const label = wanted.label === null ? null : String(wanted.label);
-    if (label !== null && ![...(isSlice ? [] : labels), REJECT, SKIP].includes(label)) throw bad("Unknown label");
+    if (label !== null && ![...(kinds.includes("slice") ? [] : labels), REJECT, SKIP].includes(label)) throw bad("Unknown label");
     const entry = { ...(target.decisions[item.image] ?? {}), boxes: { ...(target.decisions[item.image]?.boxes ?? {}) } };
-    if (label === null) delete entry.boxes[key]; else entry.boxes[key] = label;
+    for (const key of keys) if (label === null) delete entry.boxes[key]; else entry.boxes[key] = label;
     entry.updatedAt = new Date().toISOString();
     target.decisions = { ...target.decisions, [item.image]: entry };
     if (!Object.keys(entry.boxes).length) delete target.decisions[item.image];
@@ -284,12 +289,7 @@ button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(
 a.button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;text-decoration:none}
 button:hover,a.button:hover{border-color:var(--fg)}button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}button:disabled{opacity:.5;cursor:default}
 .lead{margin:0 0 12px;line-height:1.55}.lead .cand{color:var(--accent);font-weight:600}.lead .ref{color:var(--ref);font-weight:600}.lead .oth{color:#c08cff;font-weight:600}
-.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px}@media (max-width:900px){.layout{grid-template-columns:1fr}}
-.views{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}@media (max-width:640px){.views{grid-template-columns:1fr}}
-canvas{width:100%;height:auto;display:block;background:#000;border-radius:6px}
-.cwrap{position:relative}.zbadge{position:absolute;top:8px;right:8px;display:flex;gap:6px;align-items:center}
-.zbadge span,.zbadge button{font-family:inherit;font-size:12px;line-height:1.4;color:#fff;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:2px 9px}
-.zbadge span{pointer-events:none;font-variant-numeric:tabular-nums}.zbadge button:hover{border-color:#fff}#frame,#slice,#zoom{cursor:grab;touch-action:none}canvas.drag{cursor:grabbing!important}
+canvas{display:block}
 .buttons{display:grid;gap:8px}.buttons button{text-align:left;padding:10px 12px}
 .buttons .target{font-weight:600}
 .buttons button[aria-pressed=true]{background:color-mix(in srgb,var(--accent) 18%,var(--card));border-color:var(--accent)}
@@ -310,15 +310,39 @@ nav{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}nav s
 .empty{padding:28px;text-align:center;color:var(--muted)}#err{color:var(--no)}[hidden]{display:none!important}
 
 .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin:16px 0}
-.tile{padding:0;overflow:hidden;text-align:left;align-self:start}.tile canvas{border-radius:0;background:transparent}.tile .caption{padding:8px;overflow-wrap:anywhere}.tile small{display:block;color:var(--muted)}
+.gallery.nails{grid-template-columns:repeat(auto-fill,324px);justify-content:center}
+.tile{background:var(--card);border-radius:10px;overflow:hidden;align-self:start}.tile .caption{padding:8px;overflow-wrap:anywhere}.tile small{display:block;color:var(--muted)}
+.tile .open{display:block;width:100%;padding:0;border:0;border-radius:0;background:transparent}.tile canvas{width:100%;height:auto}.tile canvas.fixed{width:320px;height:320px}
+.tile{position:relative}.tile .more{position:absolute;top:6px;right:6px;width:32px;height:32px;padding:0;border-radius:999px;font-size:18px;line-height:1;color:#fff;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.3)}
+.tile .more:hover,.tile .more[aria-expanded=true]{border-color:#fff;background:rgba(0,0,0,.8)}
+.menu{position:fixed;z-index:10;min-width:210px;max-width:calc(100vw - 16px);display:flex;flex-direction:column;padding:4px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px #0006}
+.menu .title{font-size:12px;color:var(--muted);padding:5px 10px 4px}.menu .sep{height:1px;background:var(--line);margin:4px 0}
+.menu button{position:relative;border:0;border-radius:6px;background:transparent;text-align:left;padding:7px 10px 7px 30px}
+.menu button:hover,.menu button:focus-visible{background:color-mix(in srgb,var(--fg) 9%,var(--card));outline:none}
+.menu button[aria-checked=true]::before{content:"✓";position:absolute;left:11px;font-weight:700}
+.menu .target[aria-checked=true]::before{color:var(--ok)}.menu .reject[aria-checked=true]::before{color:var(--no)}.menu .skip[aria-checked=true]::before{color:#9a9a93}
+.galleryEnd{text-align:center;color:var(--muted);padding:12px;min-height:44px}
 .tile{border:2px solid var(--line)}.tile[data-status="accepted"]{border-color:#328557}.tile[data-status="reviewed"]{border-color:#487cc7}.tile[data-status="partial"],.tile[data-status="unsure"]{border-color:#b88724}
 .tile .statusRow{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:7px}
 .tile .statusBadge{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:#e4e4e1;color:#4c4c46}
 .tile[data-status="accepted"] .statusBadge{background:#d8f0e0;color:#145f32}.tile[data-status="reviewed"] .statusBadge{background:#deebff;color:#245693}.tile[data-status="partial"] .statusBadge,.tile[data-status="unsure"] .statusBadge{background:#fff0c9;color:#775000}
 @media(prefers-color-scheme:dark){.tile .statusBadge{background:#373733;color:#cecec6}.tile[data-status="accepted"] .statusBadge{background:#1d4430;color:#a4e5ba}.tile[data-status="reviewed"] .statusBadge{background:#213b60;color:#b4d1ff}.tile[data-status="partial"] .statusBadge,.tile[data-status="unsure"] .statusBadge{background:#4c3a16;color:#f3d284}}
 .filters{position:sticky;top:0;background:var(--bg);z-index:1;padding:10px 0}.filters input{font:inherit;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
-dialog{width:min(1240px,96vw);max-height:94vh;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);padding:16px}dialog::backdrop{background:#0009}
-.dialogHead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.views{display:block}.imageViewport{overflow:auto;max-height:65vh}#slice{background:transparent;border-radius:0;max-width:none}#frame{background:transparent}
+dialog{width:min(1400px,96vw);height:94vh;max-height:94vh;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);padding:14px 16px}
+dialog[open]{display:flex;flex-direction:column}dialog::backdrop{background:#0009}
+.dialogHead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+.dialogTitle{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline;min-width:0}.dialogTitle strong{overflow-wrap:anywhere}
+.dialogNav{display:flex;gap:8px;align-items:center}.dialogNav button{white-space:nowrap}.dialogNav .meta{min-width:64px;text-align:center;font-variant-numeric:tabular-nums}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;flex:1;min-height:0}
+.viewer{display:flex;flex-direction:column;gap:8px;min-height:0}
+.stage{position:relative;flex:1;min-height:320px;background:#121211;border-radius:8px;overflow:hidden}
+#view{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}#view.drag{cursor:grabbing}
+.zbadge{position:absolute;top:8px;right:8px;pointer-events:none;font-size:12px;line-height:1.4;color:#fff;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:2px 9px;font-variant-numeric:tabular-nums}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.toolbar label{display:flex;gap:5px;align-items:center}.toolbar .sep{width:1px;align-self:stretch;background:var(--line)}
+.toolbar button[aria-pressed=true]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--card))}
+.viewer .hint{margin:0;word-break:normal}.viewer .legend{margin:0}
+#aside{display:flex;flex-direction:column;gap:12px;overflow:auto;min-height:0}#aside .why{margin:0}
+@media (max-width:900px){.layout{grid-template-columns:1fr}dialog{height:auto}dialog[open]{display:block}.stage{flex:none;height:60vh}#aside{overflow:visible;margin-top:12px}}
 .modelTable{border-collapse:collapse;width:100%;margin:12px 0}.modelTable td,.modelTable th{padding:6px;border-bottom:1px solid var(--line);text-align:left}
 </style></head><body><main>
 <header><div><h1 id="title">Review pallet nails</h1><div class="sub" id="sub"></div></div><div class="sub" id="count"></div></header>
@@ -352,53 +376,53 @@ dialog{width:min(1240px,96vw);max-height:94vh;border:1px solid var(--line);borde
 <label>Review status <select id="filter"><option value="all">All</option><option value="todo">Not reviewed</option><option value="accepted">Accepted</option><option value="rejected">Not this</option><option value="unsure">Unsure</option></select></label>
 <label>File name <input id="searchFiles" type="search" placeholder="Search file names"></label>
 <label>Sort <select id="sort"><option value="score-desc">Score: high to low</option><option value="score-asc">Score: low to high</option><option value="name-asc">File name: A–Z</option><option value="name-desc">File name: Z–A</option></select></label>
-<button id="applyFilters">Apply filters</button><span id="galleryCount" class="meta"></span>
-</nav><p class="meta">Decisions stay visible. Apply filters when you want to update this gallery.</p>
-<div id="comparisonSummary"></div><div class="gallery" id="gallery"></div><button id="more" hidden>Show more</button>
-<dialog id="detail" aria-label="Review image"><div class="dialogHead"><strong id="dialogName"></strong><button id="closeDetail">Back to gallery</button></div>
-<div class="layout"><section>
-<div class="panel empty" id="emptyView" hidden></div>
-<div class="views" id="views">
-<div class="panel"><h2>Slice</h2><div class="cwrap"><canvas id="slice" width="640" height="640"></canvas><div class="zbadge"><span id="sliceLevel" title="How many times closer than the whole slice">1×</span><button id="sliceReset" hidden title="Back to the start view">Reset</button></div></div>
-<nav><label><input type="checkbox" id="showBoxes" checked> boxes (H)</label><span class="meta">Click a box to select it · scroll or pinch to zoom, drag or two-finger drag to move</span></nav>
-<p class="why" id="why"></p><div class="boxes" id="boxes"></div>
-<div class="legend" id="legend"></div></div>
-<nav><label><input type="checkbox" id="pixel"> pixels</label><label><input type="checkbox" id="refs" checked> reference boxes</label>
-<button id="frameBtn" hidden>Show on the pallet</button>
-<a id="ziraLink" class="button" target="_blank" rel="noopener noreferrer" title="Key O" hidden>Open in Zira ↗</a></nav>
-<div id="comparisonDetail"></div><details class="where"><summary>Frame and slice names</summary><div><b id="frameName" title="The frame's name in Zira"></b> <span class="meta" id="spot"></span>
-<div class="meta">Slice <code id="sliceName"></code> <button id="copyName" title="Copy the frame and slice names">Copy</button></div></div></details>
-</div>
-<div class="panel" id="framePanel" hidden style="margin-top:12px"><h2>On the pallet</h2><div class="cwrap"><canvas id="frame" width="1200" height="1200"></canvas><div class="zbadge"><span id="frameLevel" title="How many times closer than the whole pallet">1×</span><button id="zoomFit" hidden title="Back to the start view">Reset</button></div></div>
-<nav><button id="zoomSlice" title="Key Z">Zoom to slice</button><button id="zoomOut" title="Key -">−</button><button id="zoomIn" title="Key +">+</button>
-<span class="meta" id="zoomText">Scroll or pinch to zoom, drag or two-finger drag to move, double-click to zoom in.</span></nav></div>
-<nav><button id="prev">← Back</button><button id="next">Next →</button>
-
-<span class="meta" id="pos"></span></nav>
+<button id="applyFilters">Apply filters</button><label><input type="checkbox" id="galleryBoxes" checked> Boxes (H)</label><span id="galleryCount" class="meta"></span>
+</nav><p class="meta">Decisions stay visible. Apply filters when you want to update this gallery. Right-click an image or use its ⋯ to mark it here, or open it to choose box by box.</p>
+<p class="meta" id="galleryErr" style="color:var(--no)"></p>
+<div id="comparisonSummary"></div><div class="panel empty" id="emptyView" hidden></div><div class="gallery" id="gallery"></div><div class="galleryEnd" id="galleryEnd"></div>
+<dialog id="detail" aria-labelledby="dialogName">
+<div class="dialogHead"><div class="dialogTitle"><strong id="dialogName"></strong><span class="meta" id="spot"></span></div>
+<div class="dialogNav"><button id="prev" title="Key ← or B">← Back</button><span class="meta" id="pos"></span><button id="next" title="Key → or N">Next →</button>
+<button id="closeDetail" title="Esc, or click outside">Close ✕</button></div></div>
+<div class="layout"><section class="viewer">
+<div class="stage"><canvas id="view"></canvas><span class="zbadge" id="level" title="How many times closer than the whole slice">1×</span></div>
+<div class="toolbar"><button id="zoomOut" title="Key −">−</button><button id="zoomIn" title="Key +">+</button>
+<button id="fitSlice" title="Key Z">Fit slice</button><button id="fullPallet" title="Key F" aria-pressed="false" hidden>Whole pallet</button><span class="sep"></span>
+<label><input type="checkbox" id="showBoxes" checked> Boxes (H)</label><label><input type="checkbox" id="refs" checked> Reference boxes</label><label><input type="checkbox" id="pixel"> Pixels</label>
+<a id="ziraLink" class="button" target="_blank" rel="noopener noreferrer" title="Key O" hidden>Open in Zira ↗</a></div>
+<p class="meta hint" id="hint"></p><div class="legend" id="legend"></div>
 </section><aside id="aside">
-<div class="panel"><h2>What is it?</h2><div class="buttons" id="choices"></div><p id="err"></p></div>
-<details class="panel" style="margin-top:12px"><summary>Details</summary><div class="chips" id="chips"></div><div class="meta" id="meta"></div></details>
-<details class="panel guide" style="margin-top:12px"><summary>How to tell</summary><div id="guide"></div></details>
+<div class="panel"><h2>What is it?</h2><div class="boxes" id="boxes"></div><div class="buttons" id="choices" style="margin-top:10px"></div><p id="err"></p></div>
+<p class="why" id="why"></p><div id="comparisonDetail"></div>
+<details class="panel"><summary>Details</summary><div class="chips" id="chips"></div><div class="meta" id="meta"></div>
+<div class="where meta">Slice <code id="sliceName"></code> <button id="copyName" title="Copy the frame and slice names">Copy</button></div></details>
+<details class="panel guide"><summary>How to tell</summary><div id="guide"></div></details>
 </aside></div></dialog></div>
+<div class="menu" id="markMenu" role="menu" aria-label="Mark this image" hidden></div>
 <div class="panel empty" id="emptyArea" hidden>Choose where to look and which model to use, then press Find.</div>
 </main>
 <script>
 ${contentRect.toString()}
 ${galleryOrder.toString()}
+${galleryKeys.toString()}
 const base = location.pathname;
 let S = null, O = null, order = [], at = 0, box = "0", showRefs = true;
 const $ = id => document.getElementById(id);
 const img = new Image(), frameImg = new Image();
-// Load the original pallet only when its optional view is open.
-let frameKey = null;
-const frameKeyOf = i => S.run + "|" + i;
-function loadFrame() {
-  const item = S.items[order[at]];
-  if ($("framePanel").hidden || !S.framesAvailable || !item.frame || frameKey === frameKeyOf(order[at])) return;
-  const key = frameKeyOf(order[at]);
-  frameImg.onload = () => { if (key !== frameKeyOf(order[at])) return; frameKey = key; if (!$("framePanel").hidden) frameLoaded(); };
-  frameImg.src = base + "frame?i=" + order[at] + "&r=" + encodeURIComponent(S.run);
+// The pallet frame loads with its slice, so zooming out can show it; slices of one frame share it.
+let imgKey = null, imgReady = false, frameKey = null, frameReady = false, frameMissing = false;
+const frameKeyOf = item => S.run + "|" + item.session + "|" + item.frame;
+function loadImages() {
+  const i = order[at], item = S.items[i], r = "&r=" + encodeURIComponent(S.run);
+  if (imgKey !== S.run + "|" + i) { imgKey = S.run + "|" + i; imgReady = false; img.src = base + "slice?i=" + i + r; } else draw();
+  if (!S.framesAvailable || !item.frame || !item.crop) { frameKey = null; frameReady = false; return; }
+  if (frameKey === frameKeyOf(item)) return;
+  frameKey = frameKeyOf(item); frameReady = frameMissing = false; frameImg.src = base + "frame?i=" + i + r;
 }
+img.onload = () => { imgReady = true; $("err").textContent = ""; draw(); };
+img.onerror = () => { imgReady = false; $("view").getContext("2d").clearRect(0, 0, $("view").width, $("view").height); $("err").textContent = "Image unavailable; keep the dataset in its original location."; };
+frameImg.onload = () => { frameReady = true; draw(); };
+frameImg.onerror = () => { frameReady = false; frameMissing = true; draw(); };
 const KEYS = {};
 const NAMES = { nail: "Nail", protrudeNail: "Protruding nail", flushNail: "Flush nail", raisedNail: "Raised nail", knot: "Knot" };
 const h = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -418,43 +442,131 @@ const accepted = item => Object.values(S.decisions[item.image]?.boxes || {}).som
 function filtered() {
   return galleryOrder(S.items, S.decisions, S.targets, {status: $("filter").value, search: $("searchFiles").value, sort: $("sort").value});
 }
-let visible = 80;
+const PAGE = 80;
+let visible = PAGE;
 const savedViews = new Map();
 function refreshGallery() {
-  order = filtered(); at = 0; visible = 80; savedViews.set(S.run, {order: [...order], at, visible}); renderGallery(); render();
+  order = filtered(); at = 0; visible = PAGE; savedViews.set(S.run, {order: [...order], at, visible}); renderGallery(); render();
 }
+// Nail intersection slices are all 320 × 320; their tiles show them at that size, pixel for pixel.
+const NAIL_SLICE = 320;
+const isNailSlice = (W, H) => W === NAIL_SLICE && H === NAIL_SLICE;
+const thumbs = new Map();
 function renderGallery() {
-  const gallery = $("gallery"); gallery.replaceChildren();
+  thumbs.clear(); $("gallery").replaceChildren();
+  $("gallery").classList.toggle("nails", S.items.some(item => Array.isArray(item.pad)));
   $("galleryCount").textContent = order.length + " images";
-  $("more").hidden = visible >= order.length;
-  for (const index of order.slice(0, visible)) {
-    const item = S.items[index], tile = document.createElement("button"), canvas = document.createElement("canvas");
-    tile.className = "tile"; tile.dataset.index = index; tile.append(canvas);
-    const caption = document.createElement("div"); caption.className = "caption";
-    const name = document.createElement("div"); name.textContent = item.image.split("/").pop(); caption.append(name);
-    const statusRow = document.createElement("div"); statusRow.className = "statusRow";
-    const status = document.createElement("span"); status.className = "statusBadge"; status.id = "status-" + index;
-    const score = document.createElement("small"), confidence = Math.max(0, ...item.candidates.map(c => c.score || 0));
-    score.textContent = confidence ? Math.round(confidence * 100) + "%" : "";
-    statusRow.append(status, score); caption.append(statusRow); tile.append(caption);
-    tile.onclick = () => { at = order.indexOf(index); box = "0"; resetView("slice"); $("framePanel").hidden = true; $("detail").showModal(); render(); };
-    gallery.append(tile); updateTile(index);
-    const thumbnail = new Image();
-    thumbnail.onload = () => {
-      const W = thumbnail.naturalWidth, H = thumbnail.naturalHeight, [x,y,w,hh] = contentRect(item, W, H);
-      canvas.width = w; canvas.height = hh; const g = canvas.getContext("2d");
-      g.drawImage(thumbnail,x,y,w,hh,0,0,w,hh); g.strokeStyle = "#e8890c"; g.lineWidth = 1;
-      for (const b of item.candidates) g.strokeRect((b.x-b.w/2)*W-x,(b.y-b.h/2)*H-y,b.w*W,b.h*H);
-    };
-    thumbnail.onerror = () => { status.textContent = "Image unavailable"; };
-    thumbnail.src = base + "slice?i=" + index + "&r=" + encodeURIComponent(S.run);
-  }
+  appendTiles();
 }
-function updateTile(index) {
-  const item = S.items[index], el = $("status-" + index); if (!el) return;
+// Infinite scroll: the next page of tiles is added as the end of the gallery comes near.
+function appendTiles() {
+  const gallery = $("gallery"), end = Math.min(visible, order.length);
+  for (const index of order.slice(gallery.children.length, end)) gallery.append(tileOf(index));
+  $("galleryEnd").textContent = end < order.length ? "Loading more…" : order.length > PAGE ? "All " + order.length + " images shown" : "";
+  requestAnimationFrame(fillScreen);
+}
+function fillScreen() {
+  if (!S || S.empty || $("reviewArea").hidden || visible >= order.length) return;
+  if ($("galleryEnd").getBoundingClientRect().top < innerHeight + 800) { visible += PAGE; appendTiles(); }
+}
+new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) fillScreen(); }, { rootMargin: "800px" }).observe($("galleryEnd"));
+function tileOf(index) {
+  const item = S.items[index], tile = document.createElement("div"), open = document.createElement("button"), canvas = document.createElement("canvas");
+  tile.className = "tile"; tile.id = "tile-" + index;
+  open.className = "open"; open.dataset.open = index; open.title = "Open " + stem(item.image); open.append(canvas);
+  const caption = document.createElement("div"); caption.className = "caption";
+  const name = document.createElement("div"); name.textContent = item.image.split("/").pop();
+  const statusRow = document.createElement("div"); statusRow.className = "statusRow";
+  const status = document.createElement("span"); status.className = "statusBadge";
+  const score = document.createElement("small"), confidence = Math.max(0, ...item.candidates.map(c => c.score || 0));
+  score.textContent = confidence ? Math.round(confidence * 100) + "%" : "";
+  statusRow.append(status, score);
+  const more = document.createElement("button");
+  more.className = "more"; more.dataset.menu = index; more.textContent = "⋯"; more.title = "Mark this image (or right-click it)";
+  more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false");
+  caption.append(name, statusRow); tile.append(open, more, caption);
+  const thumbnail = new Image();
+  thumbnail.onload = () => { thumbs.set(index, { image: thumbnail, canvas }); drawThumb(index); };
+  thumbnail.onerror = () => { status.textContent = "Image unavailable"; };
+  thumbnail.src = base + "slice?i=" + index + "&r=" + encodeURIComponent(S.run);
+  updateTile(index, tile);
+  return tile;
+}
+// Nail slices keep their 320 × 320 size with the letterbox left out around the centered content; other images
+// show their content only. Proposals take the colour of their decision.
+function drawThumb(index) {
+  const t = thumbs.get(index); if (!t) return;
+  const item = S.items[index], { image, canvas } = t, W = image.naturalWidth, H = image.naturalHeight, [x, y, w, hh] = contentRect(item, W, H);
+  const fixed = isNailSlice(W, H), ox = fixed ? x - (W - w) / 2 : x, oy = fixed ? y - (H - hh) / 2 : y;
+  if (fixed) $("gallery").classList.add("nails");
+  canvas.classList.toggle("fixed", fixed); canvas.width = fixed ? W : w; canvas.height = fixed ? H : hh;
+  const g = canvas.getContext("2d");
+  g.drawImage(image, x, y, w, hh, x - ox, y - oy, w, hh);
+  if (!showBoxes) return;
+  g.lineWidth = Math.max(1.5, canvas.width / 200);
+  item.candidates.forEach((b, i) => { g.strokeStyle = colorOf(choiceOf(item, String(i)), "candidate"); g.strokeRect((b.x - b.w / 2) * W - ox, (b.y - b.h / 2) * H - oy, b.w * W, b.h * H); });
+}
+function updateTile(index, tile = $("tile-" + index)) {
+  if (!tile) return;
+  const item = S.items[index];
   const status = unsure(item) ? "unsure" : touched(item) && pending(item) ? "partial" : accepted(item) ? "accepted" : reviewed(item) ? "reviewed" : "todo";
-  el.closest(".tile").dataset.status = status;
-  el.textContent = {partial:"◐ Partly reviewed",unsure:"? Unsure",accepted:"✓ Accepted",reviewed:"✓ Reviewed",todo:"○ Not reviewed"}[status];
+  tile.dataset.status = status;
+  const yes = [...new Set(Object.values(S.decisions[item.image]?.boxes || {}).filter(isTarget))].map(l => nice(l).replace(/&#39;/g, "'"));
+  tile.querySelector(".statusBadge").textContent = {partial:"◐ Partly reviewed",unsure:"? Unsure",accepted:"✓ " + both(yes),reviewed:"✓ Reviewed",todo:"○ Not reviewed"}[status];
+  drawThumb(index);
+}
+// Marks open from the ⋯ in a tile's corner or a right-click on its image. A mark decides every proposal on the
+// image at once; choosing the checked mark again, or Clear mark, undoes it.
+let menuFrom = null;
+function openMenu(index, x, y, from, alignRight = false) {
+  closeMenu();
+  const item = S.items[index], keys = galleryKeys(item), menu = $("markMenu");
+  const what = keys[0] === "slice" ? "this slice" : keys.length > 1 ? "all " + keys.length + " proposals" : "the proposal";
+  const same = l => keys.length > 0 && keys.every(k => choiceOf(item, k) === l);
+  const options = keys.length ? [...(keys[0] === "slice" ? [] : S.targets.map(t => [t, nice(t)])), ["reject", "Not this"], ["skip", "Unsure, can&#39;t tell"]] : [];
+  menu.innerHTML = '<div class="title">' + (keys.length ? "Mark " + what : "Choose box by box in the image") + "</div>" +
+    options.map(([l, text]) => '<button role="menuitemradio" aria-checked="' + same(l) + '" data-mark="' + h(l) + '" data-index="' + index + '" class="' + (isTarget(l) ? "target" : l) + '">' + text + "</button>").join("") +
+    (options.some(([l]) => same(l)) ? '<button role="menuitem" data-mark="" data-index="' + index + '">Clear mark</button>' : "") +
+    (options.length ? '<div class="sep"></div>' : "") + '<button role="menuitem" data-open="' + index + '">Open image</button>';
+  menu.hidden = false; menuFrom = from;
+  $("tile-" + index)?.querySelector(".more").setAttribute("aria-expanded", "true");
+  const r = menu.getBoundingClientRect(), left = alignRight ? x - r.width : x;
+  menu.style.left = Math.max(8, Math.min(left, innerWidth - r.width - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + "px";
+  menu.querySelector("button").focus();
+}
+function closeMenu(refocus = false) {
+  if ($("markMenu").hidden) return;
+  $("markMenu").hidden = true;
+  document.querySelectorAll(".tile .more[aria-expanded=true]").forEach(b => b.setAttribute("aria-expanded", "false"));
+  if (refocus) menuFrom?.focus({ preventScroll: true });
+}
+$("gallery").addEventListener("contextmenu", e => {
+  const o = e.target.closest("[data-open]"); if (!o) return;
+  e.preventDefault();
+  // The keyboard's menu key gives no pointer position: open it at the image's corner.
+  const r = o.getBoundingClientRect(), keyboard = !e.clientX && !e.clientY;
+  openMenu(Number(o.dataset.open), keyboard ? r.left + 8 : e.clientX, keyboard ? r.top + 8 : e.clientY, o);
+});
+$("markMenu").addEventListener("keydown", e => {
+  const items = [...$("markMenu").querySelectorAll("button")], i = items.indexOf(document.activeElement);
+  if (e.key === "Escape") { e.preventDefault(); closeMenu(true); }
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
+  else if (e.key === "Tab") closeMenu();
+});
+// A click outside an open menu only closes it, except on another tile's ⋯, which opens that tile's menu instead.
+document.addEventListener("click", e => {
+  if ($("markMenu").hidden || e.target.closest("#markMenu")) return;
+  const other = e.target.closest("[data-menu]"), same = other && other === menuFrom;
+  closeMenu(same);
+  if (!other || same) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+addEventListener("scroll", () => closeMenu(), { passive: true });
+addEventListener("resize", () => closeMenu());
+function openTile(index) {
+  at = order.indexOf(index); box = "0";
+  if (at < 0) return;
+  closeMenu(); $("detail").showModal(); render();
 }
 function boxesOf(item) {
   const list = item.candidates.map((c, i) => ({ key: String(i), b: c, kind: "candidate", label: "Possible " + nice(c.class || S.target).toLowerCase() + " " + (i + 1) + " · " + Math.round(c.score * 100) + "%" + (c.referenceClass ? " · labeled " + nice(c.referenceClass) : "") }));
@@ -464,56 +576,106 @@ function boxesOf(item) {
   (item.others || []).forEach((o, i) => list.push({ key: "m" + i, b: o, kind: "other", label: "Model: " + nice(o.class).toLowerCase() + " " + (i + 1) + " · " + Math.round(o.score * 100) + "%" }));
   return list;
 }
+const colorOf = (d, kind) => isTarget(d) ? "#1f9d55" : d === "reject" ? "#d93636" : d === "skip" ? "#9a9a93" : kind === "candidate" ? "#e8890c" : kind === "other" ? "#c08cff" : "#6ea0ff";
 // Boxes in the colour of their decision; k maps slice fractions to canvas units from (ox, oy), pad pushes
 // the outline outward so it does not cover the nail's edge, and lines keep their on-screen width at any zoom.
 function drawBoxes(g, item, k, ox, oy, z, pad, kh = k) {
   for (const x of showBoxes ? boxesOf(item) : []) {
     if (x.kind === "reference" && !showRefs && x.key !== box) continue;
-    const on = x.key === box, d = choiceOf(item, x.key), p = pad / z;
+    const on = x.key === box, p = pad / z;
     g.lineWidth = (on ? 4 : x.kind === "other" ? 3 : 2.5) / z; g.setLineDash(x.kind === "candidate" ? [7 / z, 4 / z] : x.kind === "other" ? [4 / z, 3 / z] : []);
-    g.strokeStyle = isTarget(d) ? "#1f9d55" : d === "reject" ? "#d93636" : d === "skip" ? "#9a9a93" : x.kind === "candidate" ? "#e8890c" : x.kind === "other" ? "#c08cff" : "#6ea0ff";
+    g.strokeStyle = colorOf(choiceOf(item, x.key), x.kind);
     g.strokeRect((x.b.x - x.b.w / 2) * k - ox - p, (x.b.y - x.b.h / 2) * kh - oy - p, x.b.w * k + 2 * p, x.b.h * kh + 2 * p);
   }
   g.setLineDash([]);
 }
-function drawSlice() {
-  const item = S.items[order[at]], c = $("slice"), g = c.getContext("2d");
-  if (!item || !img.naturalWidth) return;
-  const [left, top, width, height] = contentRect(item, img.naturalWidth, img.naturalHeight);
-  c.width = width; c.height = height;
-  g.imageSmoothingEnabled = !$("pixel").checked;
-  useView(g, "slice");
-  g.drawImage(img, left, top, width, height, 0, 0, width, height);
-  drawBoxes(g, item, img.naturalWidth, left, top, VIEWS.slice.z, 0, img.naturalHeight);
-  g.setTransform(1, 0, 0, 1, 0, 0);
-}
 const times = z => (z >= 10 ? Math.round(z) : Math.round(z * 10) / 10) + "×";
-// The cropped slice zooms from canvas point (v.x, v.y); new images start whole.
-const VIEWS = { slice: { x: 0, y: 0, z: 1 } }, shown = { image: null, box: null };
-let showBoxes = true;
-function resetView(id) { Object.assign(VIEWS[id], { x: 0, y: 0, z: 1, still: id === "slice" }); $(id + "Reset").hidden = true; }
-function useView(g, id) {
-  const v = VIEWS[id], c = $(id);
-  v.z = Math.min(MAX_ZOOM, Math.max(1, v.z));
-  v.x = Math.min(c.width - c.width / v.z, Math.max(0, v.x)); v.y = Math.min(c.height - c.height / v.z, Math.max(0, v.y));
-  $(id + "Reset").hidden = v.z === 1; v.still = v.z === 1; $(id + "Level").textContent = times(v.z);
-  g.setTransform(v.z, 0, 0, v.z, -v.x * v.z, -v.y * v.z);
+// One view for the slice and its pallet, measured in slice pixels with the letterbox removed. The pallet frame is
+// placed in the same space from the slice's crop, so zooming out past the slice shows the whole pallet around it.
+// V is the point at the center of the view and its zoom; 1 fits the whole slice. A new image starts fitted.
+const V = { x: 0, y: 0, z: 1, fresh: true }, MAX_ZOOM = 16;
+let showBoxes = true, last = null;
+function geometry() {
+  const c = $("view"), item = S.items[order[at]], W = img.naturalWidth, H = img.naturalHeight;
+  const [left, top, cw, ch] = contentRect(item, W, H), G = { c, item, W, H, left, top, cw, ch, frame: null };
+  if (frameReady && item.crop && frameKey === frameKeyOf(item)) {
+    const [l, t, w, hh] = item.crop, sx = cw / w, sy = ch / hh;
+    G.frame = { x: -l * sx, y: -t * sy, w: frameImg.naturalWidth * sx, h: frameImg.naturalHeight * sy };
+  }
+  G.fit = Math.min(c.width / cw, c.height / ch);
+  G.min = G.frame ? Math.min(1, Math.min(c.width / G.frame.w, c.height / G.frame.h) / G.fit) : 1;
+  return G;
 }
+// Keeps the zoom between the whole pallet (or the slice) and MAX_ZOOM, and the view from moving past their edges.
+function clampView(G) {
+  if (V.fresh) Object.assign(V, { x: G.cw / 2, y: G.ch / 2, z: 1, fresh: false });
+  V.z = Math.min(MAX_ZOOM, Math.max(G.min, V.z));
+  const s = G.fit * V.z, area = G.frame || { x: 0, y: 0, w: G.cw, h: G.ch };
+  const axis = (v, from, size, half) => size <= 2 * half ? from + size / 2 : Math.min(from + size - half, Math.max(from + half, v));
+  V.x = axis(V.x, area.x, area.w, G.c.width / 2 / s); V.y = axis(V.y, area.y, area.h, G.c.height / 2 / s);
+  return s;
+}
+function draw() {
+  if (!S || S.empty || !order.length || !$("detail").open || !imgReady) return;
+  const c = $("view"), r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  if (!r.width || !r.height) return;
+  c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  const G = geometry(), s = clampView(G), g = c.getContext("2d");
+  g.setTransform(s, 0, 0, s, c.width / 2 - V.x * s, c.height / 2 - V.y * s);
+  g.imageSmoothingEnabled = !$("pixel").checked;
+  if (G.frame) g.drawImage(frameImg, G.frame.x, G.frame.y, G.frame.w, G.frame.h);
+  g.drawImage(img, G.left, G.top, G.cw, G.ch, 0, 0, G.cw, G.ch);
+  if (G.frame) {
+    // The rest of the pallet is dimmed so the slice under review stands out.
+    g.fillStyle = "rgba(0,0,0,.45)"; g.beginPath(); g.rect(G.frame.x, G.frame.y, G.frame.w, G.frame.h); g.rect(0, 0, G.cw, G.ch); g.fill("evenodd");
+    if (showBoxes) { g.strokeStyle = "#e8890c"; g.lineWidth = 2 * dpr / s; g.strokeRect(0, 0, G.cw, G.ch); }
+  }
+  drawBoxes(g, G.item, G.W, G.left, G.top, s / dpr, 3, G.H);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  last = { G, s };
+  $("level").textContent = times(V.z);
+  $("fitSlice").disabled = V.z === 1 && Math.abs(V.x - G.cw / 2) < 1 && Math.abs(V.y - G.ch / 2) < 1;
+  $("fullPallet").hidden = !G.frame; $("fullPallet").setAttribute("aria-pressed", String(!!G.frame && V.z <= G.min + 1e-6));
+  $("zoomOut").disabled = V.z <= G.min + 1e-6; $("zoomIn").disabled = V.z >= MAX_ZOOM;
+  $("hint").textContent = "Scroll or pinch to zoom" + (G.frame ? "; zoom out past the slice to see the whole pallet" : "") + ". Drag to move, double-click to zoom in, click a box to select it." +
+    (frameMissing ? " The original pallet frame is unavailable, so only the slice is shown." : "");
+}
+function fitSlice() { V.fresh = true; draw(); }
+function wholePallet() {
+  if (!last?.G.frame) return;
+  const { G } = last;
+  if (V.z <= G.min + 1e-6) return fitSlice();
+  Object.assign(V, { x: G.frame.x + G.frame.w / 2, y: G.frame.y + G.frame.h / 2, z: G.min }); draw();
+}
+// Canvas point under the pointer, in canvas pixels and in view (slice) units.
+function viewPoint(e) {
+  const c = $("view"), r = c.getBoundingClientRect(), cx = (e.clientX - r.left) * c.width / r.width, cy = (e.clientY - r.top) * c.height / r.height;
+  return { cx, cy, x: V.x + (cx - c.width / 2) / last.s, y: V.y + (cy - c.height / 2) / last.s };
+}
+// Zooms keeping the view point p at canvas point (p.cx, p.cy); without a pointer, around the center.
+function zoomTo(p, z) {
+  if (!last) return;
+  const c = $("view"), { G } = last;
+  V.z = Math.min(MAX_ZOOM, Math.max(G.min, z));
+  const s = G.fit * V.z;
+  V.x = p.x - (p.cx - c.width / 2) / s; V.y = p.y - (p.cy - c.height / 2) / s; draw();
+}
+const zoomBy = f => zoomTo({ x: V.x, y: V.y, cx: $("view").width / 2, cy: $("view").height / 2 }, V.z * f);
 // Select the smallest box under the pointer, accounting for removed padding and zoom.
 function pickBox(p) {
-  if (!S || S.empty || !order.length) return;
-  const item = S.items[order[at]], W = img.naturalWidth, H = img.naturalHeight;
-  const [left, top] = contentRect(item, W, H), nx = (p.x + left) / W, ny = (p.y + top) / H;
-  const pad = 6 / W / VIEWS.slice.z, pady = 6 / H / VIEWS.slice.z;
+  if (!S || S.empty || !order.length || !last) return;
+  const item = S.items[order[at]], { W, H, left, top } = last.G, nx = (p.x + left) / W, ny = (p.y + top) / H;
+  const pad = 6 / (last.s / (window.devicePixelRatio || 1)), padx = pad / W, pady = pad / H;
   const hits = (showBoxes ? boxesOf(item) : []).filter(x => (x.kind !== "reference" || showRefs || x.key === box) &&
-    Math.abs(nx - x.b.x) <= x.b.w / 2 + pad && Math.abs(ny - x.b.y) <= x.b.h / 2 + pady);
+    Math.abs(nx - x.b.x) <= x.b.w / 2 + padx && Math.abs(ny - x.b.y) <= x.b.h / 2 + pady);
   if (!hits.length) return;
   hits.sort((a, b) => a.b.w * a.b.h - b.b.w * b.b.h);
   box = hits[0].key; render();
 }
+// One setting for the gallery and the image view, so hiding boxes in one hides them in the other.
 function setBoxes(on) {
-  showBoxes = on; $("showBoxes").checked = on;
-  if (S && !S.empty && order.length) { drawSlice(); if (!$("framePanel").hidden) drawFrame(); }
+  showBoxes = on; $("showBoxes").checked = $("galleryBoxes").checked = on; draw();
+  for (const index of thumbs.keys()) drawThumb(index);
 }
 // Wheel events come from mice and trackpads alike. A pinch arrives with ctrlKey and zooms; a two-finger drag pans;
 // a mouse wheel zooms as before. Chrome and Safari report a trackpad's wheelDeltaY as exactly -3 × deltaY and a
@@ -530,82 +692,33 @@ function wheelKind(e) {
 const wheelY = e => e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
 // Dragging with the left button or the wheel button moves the view; the wheel button's autoscroll is turned off.
 const dragButton = e => e.button === 0 || e.button === 1;
-function noAutoscroll(c) { c.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); }); }
-function zoomable(id, redraw, onClick) {
-  const c = $(id);
+function viewer() {
+  const c = $("view");
   let from = null;
-  const point = e => {
-    const r = c.getBoundingClientRect(), v = VIEWS[id], px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
-    return { px, py, x: v.x + px * c.width / v.z, y: v.y + py * c.height / v.z };
-  };
-  // Keeps the canvas point under the cursor in place.
-  const to = (p, z) => { const v = VIEWS[id]; v.z = Math.min(MAX_ZOOM, Math.max(v.min ?? 1, z)); v.x = p.x - p.px * c.width / v.z; v.y = p.y - p.py * c.height / v.z; redraw(); };
+  const perPixel = () => c.width / c.getBoundingClientRect().width / last.s; // view units per CSS pixel
   c.addEventListener("wheel", e => {
-    const kind = wheelKind(e), v = VIEWS[id];
-    if (kind === "pan" && (v.still ?? v.z === 1)) return; // nothing to move: let the page scroll
+    if (!last) return;
     e.preventDefault();
-    if (kind === "pan") { const k = c.width / v.z / c.getBoundingClientRect().width; v.x += e.deltaX * k; v.y += e.deltaY * k; redraw(); }
-    else to(point(e), v.z * Math.exp(-wheelY(e) * (kind === "pinch" ? 0.01 : 0.002)));
+    const kind = wheelKind(e);
+    if (kind === "pan") { const k = perPixel(); V.x += e.deltaX * k; V.y += e.deltaY * k; draw(); }
+    else zoomTo(viewPoint(e), V.z * Math.exp(-wheelY(e) * (kind === "pinch" ? 0.01 : 0.002)));
   }, { passive: false });
-  c.addEventListener("dblclick", e => to(point(e), VIEWS[id].z * 2));
-  noAutoscroll(c);
+  c.addEventListener("dblclick", e => { if (last) zoomTo(viewPoint(e), V.z * 2); });
+  c.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });
   c.addEventListener("pointerdown", e => {
-    if (!dragButton(e)) return;
-    from = { x: e.clientX, y: e.clientY, vx: VIEWS[id].x, vy: VIEWS[id].y, moved: false, button: e.button }; c.setPointerCapture(e.pointerId); c.classList.add("drag");
+    if (!dragButton(e) || !last) return;
+    from = { x: e.clientX, y: e.clientY, vx: V.x, vy: V.y, moved: false, button: e.button }; c.setPointerCapture(e.pointerId); c.classList.add("drag");
   });
   c.addEventListener("pointermove", e => {
     if (!from) return;
     // A few pixels of movement is still a click, not a drag.
     if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > 4) from.moved = true;
-    const r = c.getBoundingClientRect(), v = VIEWS[id], k = c.width / v.z / r.width;
-    v.x = from.vx - (e.clientX - from.x) * k; v.y = from.vy - (e.clientY - from.y) * k; redraw();
+    const k = perPixel(); V.x = from.vx - (e.clientX - from.x) * k; V.y = from.vy - (e.clientY - from.y) * k; draw();
   });
   const end = () => { from = null; c.classList.remove("drag"); };
-  c.addEventListener("pointerup", e => { const click = from && !from.moved && from.button === 0; end(); if (click && onClick) onClick(point(e)); });
+  c.addEventListener("pointerup", e => { const click = from && !from.moved && from.button === 0; end(); if (click) pickBox(viewPoint(e)); });
   c.addEventListener("pointercancel", end);
-  $(id + "Reset").onclick = () => { resetView(id); redraw(); };
-}
-// The pallet view shows the part of the frame from (view.x, view.y), view.z times closer than the whole frame.
-// Moving to another slice keeps the zoom and centers on the new slice, so a close look can follow along.
-const view = { x: 0, y: 0, z: 1 }, MAX_ZOOM = 16;
-function clampView() {
-  const W = frameImg.naturalWidth, H = frameImg.naturalHeight;
-  view.z = Math.min(MAX_ZOOM, Math.max(1, view.z));
-  view.x = Math.min(W - W / view.z, Math.max(0, view.x)); view.y = Math.min(H - H / view.z, Math.max(0, view.y));
-}
-function zoomAt(fx, fy, z, px = 0.5, py = 0.5) {
-  // Keeps frame point (fx, fy) at the same place (px, py fractions) on the canvas.
-  view.z = Math.min(MAX_ZOOM, Math.max(1, z));
-  view.x = fx - px * frameImg.naturalWidth / view.z; view.y = fy - py * frameImg.naturalHeight / view.z;
-  clampView(); drawFrame();
-}
-function zoomToSlice() {
-  const item = S.items[order[at]];
-  if (!frameImg.naturalWidth || !item.crop) return;
-  const [l, t, w, hh] = item.crop;
-  // The slice with about its own size of pallet around it.
-  zoomAt(l + w / 2, t + hh / 2, Math.min(frameImg.naturalWidth / (w * 3), frameImg.naturalHeight / (hh * 3)));
-}
-function drawFrame() {
-  const item = S.items[order[at]], c = $("frame"), g = c.getContext("2d");
-  if (!frameImg.naturalWidth || !item.crop) return;
-  clampView();
-  const W = frameImg.naturalWidth, H = frameImg.naturalHeight, vw = W / view.z, vh = H / view.z;
-  c.height = Math.round(H * c.width / W);
-  const scale = c.width / vw;
-  g.imageSmoothingEnabled = !$("pixel").checked;
-  g.drawImage(frameImg, view.x, view.y, vw, vh, 0, 0, c.width, c.height);
-  const [l, t, w, hh] = item.crop; g.strokeStyle = "#e8890c"; g.lineWidth = 3; if (showBoxes) g.strokeRect((l - view.x) * scale, (t - view.y) * scale, w * scale, hh * scale);
-  $("frameLevel").textContent = times(view.z); $("zoomFit").hidden = view.z <= 1;
-}
-function frameLoaded() {
-  if (view.z > 1) { const [l, t, w, hh] = S.items[order[at]].crop || [0, 0, 0, 0]; zoomAt(l + w / 2, t + hh / 2, view.z); }
-  else drawFrame();
-}
-// Canvas position (CSS pixels) to frame pixels and canvas fractions.
-function framePoint(e) {
-  const r = $("frame").getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
-  return { px, py, fx: view.x + px * frameImg.naturalWidth / view.z, fy: view.y + py * frameImg.naturalHeight / view.z };
+  new ResizeObserver(() => draw()).observe(c);
 }
 // Zira's image review opens one QA frame by its storage key, base64url-encoded, and shows its whole session.
 function ziraUrl(item) {
@@ -666,20 +779,21 @@ function render() {
     "<span><i class='ln'></i>you: not this</span><span><i class='lu'></i>you: unsure</span>";
   $("count").textContent = tl.accepted + " accepted · " + tl.reviewed + " of " + tl.toReview + " reviewed" + (tl.unsure ? " · " + tl.unsure + " unsure" : "") + (tl.known ? " · " + tl.known + " already labeled" : "");
   $("progress").style.width = (tl.toReview ? 100 * tl.reviewed / tl.toReview : 0) + "%";
-  $("views").hidden = !order.length; $("emptyView").hidden = !!order.length; $("aside").hidden = !order.length;
+  $("emptyView").hidden = !!order.length;
   if (!order.length) {
-    $("pos").textContent = "";
-    $("emptyView").textContent = $("filter").value === "todo" && tl.reviewed === tl.toReview ? "All " + tl.toReview + " slices are reviewed. To look at them again, choose All in the menu below, or change the search." : "No slices in this view.";
-    $("choices").innerHTML = ""; return;
+    $("emptyView").textContent = $("filter").value === "todo" && tl.reviewed === tl.toReview ? "All " + tl.toReview + " slices are reviewed. To look at them again, choose All in the review status menu above, or change the search." : "No slices in this view.";
+    if ($("detail").open) $("detail").close();
+    return;
   }
   at = Math.max(0, Math.min(at, order.length - 1));
   if (!$("detail").open) return;
   const item = S.items[order[at]];
-  $("dialogName").textContent = item.image;
+  $("dialogName").textContent = item.frame ? ziraName(item.frame) : stem(item.image); $("dialogName").title = item.image;
   renderComparison(item);
   const list = boxesOf(item);
   if (!list.some(x => x.key === box)) box = list[0]?.key ?? "slice";
   $("pos").textContent = (at + 1) + " / " + order.length;
+  $("prev").disabled = at === 0; $("next").disabled = at === order.length - 1;
   $("boxes").innerHTML = list.map(x => '<button data-k="' + h(x.key) + '" class="' + (x.key === box ? "on" : "") + '">' + x.label + (choiceOf(item, x.key) ? " → " + nice(choiceOf(item, x.key)) : "") + "</button>").join("");
   const current = choiceOf(item, box), cam = camAnswer(item, box);
   const choice = (l, cls, title, text) => '<button data-l="' + h(l) + '" title="' + title + (l === cam ? " · " + h(camText()) : "") + '" class="' + cls + (l === cam ? " cam" : "") +
@@ -693,31 +807,27 @@ function render() {
     ...item.marks.map(m => '<span class="mark">' + h(m) + "</span>"), item.known ? item.known + " already labeled" : ""].filter(Boolean).map(t => t.startsWith("<span") ? t : "<span>" + t + "</span>").join("");
   $("meta").textContent = [item.session ? "Session " + item.session : "", item.frame || "", item.id ? "Slice " + item.id : "", item.image].filter(Boolean).join(" · ");
   $("why").innerHTML = "<b>Why this slice:</b> " + why(item);
-  $("frameBtn").hidden = !(S.framesAvailable && item.frame);
   const link = ziraUrl(item); $("ziraLink").hidden = !link; if (link) $("ziraLink").href = link;
-  $("frameName").textContent = item.frame ? ziraName(item.frame) : stem(item.image);
   $("spot").textContent = spotOf(item);
   $("sliceName").textContent = stem(item.image);
-  if (item.image !== shown.image) { resetView("slice"); }
-  shown.image = item.image; shown.box = box;
+  if (S.run + "|" + item.image !== shownImage) V.fresh = true;
+  shownImage = S.run + "|" + item.image;
   if (sliceParam() !== stem(item.image)) history.replaceState(null, "", base + "?slice=" + encodeURIComponent(stem(item.image)));
-  img.onerror = () => { $("slice").getContext("2d").clearRect(0,0,$("slice").width,$("slice").height); $("err").textContent = "Image unavailable; keep the dataset in its original location."; };
-  frameImg.onerror = () => { $("frame").getContext("2d").clearRect(0,0,$("frame").width,$("frame").height); $("err").textContent = "Original pallet frame unavailable."; };
-  img.onload = drawSlice; img.src = base + "slice?i=" + order[at] + "&r=" + encodeURIComponent(S.run);
-  loadFrame();
+  loadImages();
 }
-let queue = Promise.resolve();
-function decide(label) {
-  if (!S || S.empty || !order.length || !$("detail").open) return;
-  const request = {run: S.run, index: order[at], box, label};
-  queue = queue.then(() => save(request)).catch(e => { $("err").textContent = e.message; });
+let shownImage = null, queue = Promise.resolve();
+// Saves a label for the selected box in the image view, or for several boxes of one image from the gallery.
+function decide(label, index = order[at], boxes = [box]) {
+  if (!S || S.empty || index === undefined) return;
+  const request = {run: S.run, index, boxes, label};
+  queue = queue.then(() => save(request)).catch(e => { $("err").textContent = $("galleryErr").textContent = e.message; });
 }
 async function save(request) {
   const res = await fetch(base + "decide", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
   const out = await res.json();
   if (!res.ok) throw new Error(out.message || "Not saved");
   if (S.run !== request.run) return;
-  $("err").textContent = "";
+  $("err").textContent = $("galleryErr").textContent = "";
   S.decisions[S.items[request.index].image] = { boxes: out.boxes }; S.tally = out.tally;
   updateTile(request.index); render();
 }
@@ -886,17 +996,28 @@ async function loadState() {
   if (S && !S.empty) $("guide").innerHTML = (S.guidance.length ? S.guidance : ["Accept only what you would label as " + wanted() + " in Zira."]).map(t => "<p>" + h(t) + "</p>").join("");
   const previousView = S && savedViews.get(S.run);
   order = previousView ? previousView.order : S && !S.empty ? filtered() : [];
-  at = previousView?.at ?? 0; visible = previousView?.visible ?? 80;
+  at = previousView?.at ?? 0; visible = previousView?.visible ?? PAGE;
   if (S && !S.empty) { if (sliceParam()) goToSlice(sliceParam()); renderGallery(); renderComparison(); }
   render(); setSummary();
 }
 document.addEventListener("click", e => {
-  const l = e.target.closest("[data-l]"), k = e.target.closest("[data-k]");
-  if (l) decide(l.dataset.l);
+  const l = e.target.closest("[data-l]"), k = e.target.closest("[data-k]"), mark = e.target.closest("[data-mark]"), open = e.target.closest("[data-open]"), menu = e.target.closest("[data-menu]");
+  if (menu) { const r = menu.getBoundingClientRect(); openMenu(Number(menu.dataset.menu), r.right, r.bottom + 4, menu, true); return; }
+  if (l && $("detail").open) decide(l.dataset.l);
   if (k) { box = k.dataset.k; render(); }
+  if (open) openTile(Number(open.dataset.open));
+  if (mark) {
+    const index = Number(mark.dataset.index), item = S.items[index], keys = galleryKeys(item);
+    const label = mark.dataset.mark;
+    closeMenu(true);
+    decide(!label || keys.every(key => choiceOf(item, key) === label) ? null : label, index, keys);
+  }
 });
 document.addEventListener("keydown", e => {
-  if (["SELECT", "INPUT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey || !S || S.empty || !$("detail").open || !order.length) return;
+  if (["SELECT", "INPUT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey || !S || S.empty) return;
+  // In the gallery, H shows or hides the boxes on every tile.
+  if (!$("detail").open) { if (e.key.toLowerCase() === "h" && !e.altKey && $("markMenu").hidden) setBoxes(!showBoxes); return; }
+  if (!order.length) return;
   const key = e.key.toLowerCase();
   if (KEYS[e.key]) decide(KEYS[e.key]);
   else if (key === "0" || key === "r") decide("reject");
@@ -905,57 +1026,44 @@ document.addEventListener("keydown", e => {
   else if (key === "arrowright" || key === "n") { at += 1; render(); }
   else if (key === "arrowleft" || key === "b") { at -= 1; render(); }
   else if (key === "]") { e.preventDefault(); const list = boxesOf(S.items[order[at]]); if (!list.length) return; box = list[(list.findIndex(x => x.key === box) + 1) % list.length].key; render(); }
-  else if (key === "f" && !$("frameBtn").hidden) $("frameBtn").click();
   else if (key === "h") setBoxes(!showBoxes);
   else if (key === "o" && !$("ziraLink").hidden) window.open($("ziraLink").href, "_blank", "noopener,noreferrer");
-  else if (!$("framePanel").hidden && frameImg.naturalWidth && ["+", "=", "-", "z"].includes(key)) {
-    if (key === "z") zoomToSlice();
-    else { const W = frameImg.naturalWidth / view.z, H = frameImg.naturalHeight / view.z; zoomAt(view.x + W / 2, view.y + H / 2, view.z * (key === "-" ? 1 / 1.5 : 1.5)); }
-  }
+  else if (key === "z") fitSlice();
+  else if (key === "f") wholePallet();
+  else if (key === "+" || key === "=") zoomBy(1.5);
+  else if (key === "-") zoomBy(1 / 1.5);
 });
 $("prev").onclick = () => { at -= 1; render(); };
 $("next").onclick = () => { at += 1; render(); };
-zoomable("slice", drawSlice, pickBox);
-$("showBoxes").onchange = e => setBoxes(e.target.checked);
+viewer();
+$("zoomIn").onclick = () => zoomBy(1.5);
+$("zoomOut").onclick = () => zoomBy(1 / 1.5);
+$("fitSlice").onclick = fitSlice;
+$("fullPallet").onclick = wholePallet;
+$("showBoxes").onchange = $("galleryBoxes").onchange = e => setBoxes(e.target.checked);
+$("pixel").onchange = draw;
+$("refs").onchange = e => { showRefs = e.target.checked; draw(); };
 $("copyName").onclick = async () => {
-  const text = [$("frameName").textContent, $("spot").textContent, $("sliceName").textContent].filter(Boolean).join(" · ");
+  const text = [$("dialogName").textContent, $("spot").textContent, $("sliceName").textContent].filter(Boolean).join(" · ");
   try { await navigator.clipboard.writeText(text); $("copyName").textContent = "Copied"; } catch { $("copyName").textContent = "Copy failed"; }
   setTimeout(() => { $("copyName").textContent = "Copy"; }, 1500);
 };
-const frameCanvas = $("frame");
-const zoomBy = f => { const W = frameImg.naturalWidth / view.z, H = frameImg.naturalHeight / view.z; zoomAt(view.x + W / 2, view.y + H / 2, view.z * f); };
-$("zoomIn").onclick = () => zoomBy(1.5);
-$("zoomOut").onclick = () => zoomBy(1 / 1.5);
-$("zoomFit").onclick = () => { view.z = 1; drawFrame(); };
-$("zoomSlice").onclick = zoomToSlice;
-frameCanvas.addEventListener("wheel", e => {
-  if (!frameImg.naturalWidth) return;
-  const kind = wheelKind(e);
-  if (kind === "pan" && view.z === 1) return; // nothing to move: let the page scroll
-  e.preventDefault();
-  if (kind === "pan") { const k = frameImg.naturalWidth / view.z / frameCanvas.getBoundingClientRect().width; view.x += e.deltaX * k; view.y += e.deltaY * k; drawFrame(); return; }
-  const p = framePoint(e);
-  zoomAt(p.fx, p.fy, view.z * Math.exp(-wheelY(e) * (kind === "pinch" ? 0.01 : 0.002)), p.px, p.py);
-}, { passive: false });
-noAutoscroll(frameCanvas);
-frameCanvas.addEventListener("dblclick", e => { const p = framePoint(e); zoomAt(p.fx, p.fy, view.z * 2, p.px, p.py); });
-let dragFrom = null;
-frameCanvas.addEventListener("pointerdown", e => { if (!dragButton(e)) return; dragFrom = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; frameCanvas.setPointerCapture(e.pointerId); frameCanvas.classList.add("drag"); });
-frameCanvas.addEventListener("pointermove", e => {
-  if (!dragFrom) return;
-  const r = frameCanvas.getBoundingClientRect(), k = frameImg.naturalWidth / view.z / r.width;
-  view.x = dragFrom.vx - (e.clientX - dragFrom.x) * k; view.y = dragFrom.vy - (e.clientY - dragFrom.y) * k; drawFrame();
-});
-const dragEnd = () => { dragFrom = null; frameCanvas.classList.remove("drag"); };
-frameCanvas.addEventListener("pointerup", dragEnd); frameCanvas.addEventListener("pointercancel", dragEnd);
-$("pixel").onchange = () => { drawSlice(); if (!$("framePanel").hidden) drawFrame(); };
 $("applyFilters").onclick = refreshGallery;
 $("searchFiles").onkeydown = e => { if (e.key === "Enter") refreshGallery(); };
-$("more").onclick = () => { visible += 80; renderGallery(); };
 $("closeDetail").onclick = () => $("detail").close();
-$("detail").onclose = () => history.replaceState(null, "", base);
-$("refs").onchange = e => { showRefs = e.target.checked; drawSlice(); };
-$("frameBtn").onclick = () => { const p = $("framePanel"); p.hidden = !p.hidden; if (!p.hidden) { if (frameKey === frameKeyOf(order[at])) frameLoaded(); else loadFrame(); } };
+// A click on the backdrop closes the image; a drag that only ends there (zooming, moving) does not.
+let downOutside = false;
+const outside = e => { const r = $("detail").getBoundingClientRect(); return e.target === $("detail") && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom); };
+$("detail").addEventListener("pointerdown", e => { downOutside = outside(e); });
+$("detail").addEventListener("click", e => { if (downOutside && outside(e)) $("detail").close(); downOutside = false; });
+// Back in the gallery, the image just reviewed is in view and focused, even when it was further than the tiles shown.
+$("detail").onclose = () => {
+  history.replaceState(null, "", base);
+  if (!S || S.empty || !order.length) return;
+  if (at >= visible) { visible = Math.ceil((at + 1) / PAGE) * PAGE; appendTiles(); }
+  const tile = $("tile-" + order[at]);
+  if (tile) { tile.scrollIntoView({ block: "nearest" }); tile.querySelector(".open").focus({ preventScroll: true }); }
+};
 document.querySelectorAll("input[name=kind]").forEach(r => { r.onchange = kindChanged; });
 $("dataset").onchange = () => { fillVersions(); kindChanged(); };
 $("version").onchange = kindChanged;

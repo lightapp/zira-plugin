@@ -8,6 +8,13 @@ export function contentRect(item, width, height) {
   return [...pad, ...content];
 }
 
+// What a mark from the gallery decides: every proposal on the image, or the slice itself when nothing was
+// found or labeled there. Other images need the image view to choose box by box.
+export function galleryKeys(item) {
+  if (item.candidates.length) return item.candidates.map((_, i) => String(i));
+  return !item.truth?.length && !item.others?.length ? ["slice"] : [];
+}
+
 export function galleryOrder(items, decisions, targets, { status = 'all', search = '', sort = 'score-desc' } = {}) {
   const query = search.trim().toLowerCase();
   const score = item => Math.max(0, ...item.candidates.map(c => c.score || 0));

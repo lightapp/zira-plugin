@@ -161,7 +161,10 @@ export async function reportPeople({ call, companyId, siteId }) {
   const site = await resolveSite(call, companyId, siteId);
   let me = null;
   try { me = await currentUser(call); } catch { /* shown as unavailable */ }
-  return { kind: "report-people", site: { id: site.id, name: site.name }, me, members: await siteMembers(call, site.id) };
+  const members = await siteMembers(call, site.id);
+  // Admins can see sites they are not members of, but Zira only adds site members as followers.
+  if (me) me = { ...me, isMember: members.some(m => m.id === me.id) };
+  return { kind: "report-people", site: { id: site.id, name: site.name }, me, members };
 }
 
 const readableWidgets = dashboards => new Map(dashboards.flatMap(d => (d.widgets ?? [])
@@ -182,21 +185,23 @@ function checkWidgets(ids, available) {
   return widgetIds;
 }
 
+// Every recipient, the user included, must be an active site member: Zira refuses anyone else as a
+// follower, and finding out at the last write would leave a report without its people.
 async function resolveRecipients(call, site, recipientIds) {
   const requested = [...new Set((recipientIds?.length ? recipientIds : ["me"]).map(String))];
+  if (!requested.every(r => r === "me" || id(r))) throw new Error("Recipients must be me or user IDs");
+  const members = new Map((await siteMembers(call, site.id, { withChannel: true })).map(m => [m.id, m]));
   const recipients = [];
   if (requested.includes("me")) {
     const me = await currentUser(call);
-    recipients.push({ ...me, name: `${me.name} (you)` });
+    if (!members.has(me.id))
+      throw new Blocked("recipients", `You are not a member of ${site.name}, so Zira cannot send you this report there. Choose recipients from the site's members.`, { outside: ["me"] });
+    recipients.push({ ...members.get(me.id), name: `${me.name} (you)` });
   }
   const others = requested.filter(r => r !== "me" && !recipients.some(x => x.id === r));
-  if (others.length) {
-    if (!others.every(id)) throw new Error("Recipients must be me or user IDs");
-    const members = new Map((await siteMembers(call, site.id)).map(m => [m.id, m]));
-    const outside = others.filter(o => !members.has(o));
-    if (outside.length) throw new Blocked("recipients", "Some recipients are not active members of this site", { outside });
-    recipients.push(...others.map(o => members.get(o)));
-  }
+  const outside = others.filter(o => !members.has(o));
+  if (outside.length) throw new Blocked("recipients", "Some recipients are not active members of this site", { outside });
+  recipients.push(...others.map(o => members.get(o)));
   return recipients;
 }
 
@@ -347,7 +352,8 @@ async function readBack(call, r, created) {
   const followers = await check(async () => {
     const rows = (await call("GET", route("/channels/followers/get", { channelId: created.channelId, limit: "100" }))).data ?? [];
     const ids = new Set(rows.map(f => String(f?.id ?? f?.userId ?? f?.user?.id ?? "")));
-    return r.recipients.every(p => ids.has(p.id));
+    // Follower rows carry each person's own channel ID, not their user ID.
+    return r.recipients.every(p => ids.has(p.channelId ?? p.id));
   });
   return { channel: true, agent, schedule, followers };
 }

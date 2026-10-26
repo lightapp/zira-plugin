@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.51-preview.22",
+  "version": "0.3.51-preview.23",
   "channel": "preview",
   "audience": "public",
-  "sourceCommit": "0f7638946250f630685c34afb557f14d55e032a8",
+  "sourceCommit": "0d271e50e37e4b61bec94cbf8c985be77cb985c0",
   "sourceDirty": false,
   "skills": [
     "build-dashboard",

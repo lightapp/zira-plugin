@@ -187,17 +187,20 @@ export async function siteSystem(call, site) {
 export const personName = user =>
   [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.name || user?.email || "User";
 
-export async function currentUser(call) {
+const withChannelId = (user, wanted) => wanted && user?.channelId != null ? { channelId: String(user.channelId) } : {};
+
+// withChannel adds the person's own channel ID, which is how channel follower lists identify people.
+export async function currentUser(call, { withChannel = false } = {}) {
   const user = (await call("GET", "/users/details")).data;
   if (!id(String(user?.id ?? ""))) throw new Error("Current user details are unavailable");
-  return { id: String(user.id), name: personName(user) };
+  return { id: String(user.id), name: personName(user), ...withChannelId(user, withChannel) };
 }
 
-export async function siteMembers(call, siteId) {
+export async function siteMembers(call, siteId, { withChannel = false } = {}) {
   const rows = await listAll(call, "/users/site-members", { siteIds: siteId, includeIndirectUsers: "true", includeInactive: "false" });
   return rows
     .filter(u => id(String(u?.id ?? "")) && !u.isDeleted && u.isActive !== false && !u.isFakeEmail)
-    .map(u => ({ id: String(u.id), name: personName(u) }));
+    .map(u => ({ id: String(u.id), name: personName(u), ...withChannelId(u, withChannel) }));
 }
 
 export function receiptsFile(file, env = process.env) {

@@ -568,7 +568,7 @@ export function assess(snapshot, config, previous = {}) {
     version: 1,
     sourceProfile: snapshot.sourceProfile ?? "fixture",
     unverified,
-    engineVersion: "0.3.51-preview.22",
+    engineVersion: "0.3.51-preview.23",
     monitorId: config.monitorId,
     checks: config.checks ?? "full",
     companyId: config.companyId,

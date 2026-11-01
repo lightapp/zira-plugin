@@ -160,6 +160,18 @@ const approvalHtml = (userName, continuePath, approvalToken) => `<!doctype html>
 <form method="get" action="${escapeHtml(continuePath)}"><input type="hidden" name="approval" value="${escapeHtml(approvalToken)}">
 <button type="submit">Continue as ${escapeHtml(userName)}</button></form></main></body></html>`;
 
+// Browsers try ::1 first for localhost; binding it too beats a dev server on *:port (macOS/BSD).
+const CALLBACK_HOSTS = ['127.0.0.1', '::1'];
+const OPTIONAL_HOSTS = new Set(['::1']);
+const UNAVAILABLE_ADDRESS_CODES = new Set(['EADDRNOTAVAIL', 'EAFNOSUPPORT']);
+
+const listenOn = (server, port, host) => new Promise((resolve, reject) => {
+  server.once('error', reject);
+  server.listen(port, host, resolve);
+});
+
+const closeServer = (server) => new Promise((resolve) => server.close(() => resolve()));
+
 export const startCallbackServer = async ({ redirectUri, expectedState, timeoutMs = 300_000 }) => {
   const redirect = new URL(redirectUri);
   if (redirect.protocol !== 'http:' || redirect.hostname !== 'localhost') {
@@ -184,7 +196,7 @@ export const startCallbackServer = async ({ redirectUri, expectedState, timeoutM
   });
   approvalResult.catch(() => undefined);
 
-  const server = http.createServer((request, response) => {
+  const handleRequest = (request, response) => {
     const requestUrl = new URL(request.url || '/', redirect.origin);
 
     if (request.method === 'GET' && requestUrl.pathname === continuePath) {
@@ -232,14 +244,24 @@ export const startCallbackServer = async ({ redirectUri, expectedState, timeoutM
       callbackResponse = response;
       settleCode.resolve(code);
     }
-  });
+  };
 
-  server.on('clientError', (_error, socket) => socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'));
-
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(Number(redirect.port), '127.0.0.1', resolve);
-  });
+  const servers = [];
+  for (const host of CALLBACK_HOSTS) {
+    const server = http.createServer(handleRequest);
+    server.on('clientError', (_error, socket) => socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'));
+    try {
+      await listenOn(server, Number(redirect.port), host);
+      servers.push(server);
+    } catch (error) {
+      if (OPTIONAL_HOSTS.has(host) && UNAVAILABLE_ADDRESS_CODES.has(error.code)) continue;
+      await Promise.all(servers.map(closeServer));
+      throw error;
+    }
+  }
+  const closeServers = () => {
+    for (const server of servers) server.close();
+  };
 
   const timeout = setTimeout(() => {
     const error = new Error('Timed out waiting for browser login');
@@ -250,13 +272,13 @@ export const startCallbackServer = async ({ redirectUri, expectedState, timeoutM
       approvalSettled = true;
       settleApproval.reject(error);
     }
-    server.close();
+    closeServers();
   }, timeoutMs);
   timeout.unref();
 
   const close = () => {
     clearTimeout(timeout);
-    server.close();
+    closeServers();
   };
 
   return {

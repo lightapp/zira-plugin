@@ -55,13 +55,27 @@ export async function loadMovementLedger(profile, companyId, home) {
 export function reviewMovement(report, state, { ledger = { acknowledgements: {} }, window = movementWindow({ now: Date.parse(report.assessedAt) }) } = {}) {
   const from = Date.parse(window.from), to = Date.parse(window.to);
   const now = Date.parse(report.assessedAt), open = [], acknowledged = [], uncertain = [], older = [], coverageGaps = [], supportedDevices = [];
+  report.errors = (report.errors ?? []).filter(e => e.code !== 'movement-reviews-unavailable');
   const previous = { ...(state?.findings ?? Object.fromEntries(report.findings.map(f => [f.key, f]))) };
   for (const d of report.devices ?? []) {
     const raw = d.deviceStatus?.values?.cameraHealth?.movement;
+    if (d.checks) delete d.checks.movementReviews;
     const journal = movementJournal(raw);
     const camera = { siteId: d.siteId, deviceId: d.id, site: d.siteName, device: d.name, url: dataSourceUrl(report, d.id) };
     if (!journal) { coverageGaps.push({ ...camera, reason: 'No supported dated movement history; legacy movement flags cannot establish a weekly incident' }); continue; }
     supportedDevices.push(d.deviceKey);
+    const unavailable = ledger.unavailable?.find(e => e.deviceKey === d.deviceKey);
+    if (unavailable) {
+      coverageGaps.push({ ...camera, reason: `Shared movement review status unavailable: ${unavailable.reason}` });
+      report.errors.push({ code: 'movement-reviews-unavailable', siteId: d.siteId, deviceId: d.id, message: unavailable.reason });
+      d.checks = { ...d.checks, movementReviews: { state: 'unavailable', reason: unavailable.reason } };
+      d.deviceStatus.movement = { window, incidents: [], reviewStatus: 'unknown' };
+      d.deviceStatus.warnings = (d.deviceStatus.warnings ?? []).filter(w => !movementCode(w.code));
+      const belongs = f => f.deviceId === d.id && f.siteId === d.siteId && movementCode(f.code);
+      for (const key of ['findings', 'unverified', 'recovered']) report[key] = (report[key] ?? []).filter(f => !belongs(f));
+      if (state) for (const [key, f] of Object.entries(state.findings ?? {})) if (belongs(f)) delete state.findings[key];
+      continue;
+    }
     const healthAt = d.deviceStatus.values.cameraHealth.sampleAtEpochMs;
     if (journal.completeSinceAtEpochMs > from || journal.lastObservedAtEpochMs < to - 600000 ||
         journal.lastObservedAtEpochMs > now + 60000 || !positive(healthAt) || healthAt < to - 600000 || healthAt > now + 60000 ||
@@ -104,7 +118,9 @@ export function reviewMovement(report, state, { ledger = { acknowledgements: {} 
   }
   const sort = a => a.sort((x, y) => y.atEpochMs - x.atEpochMs);
   report.movement = { window, open: sort(open), acknowledged: sort(acknowledged), uncertain: sort(uncertain), olderUnreviewed: sort(older),
-    coverageGaps, supportedDevices, acknowledgementScope: 'This computer; shared by local plugin checks and monitors. Does not acknowledge cloud notifications or recalibrate devices.' };
+    coverageGaps, supportedDevices, acknowledgementScope: ledger.scope ?? 'local-computer',
+    acknowledgementNote: ledger.scope === 'aws-shared' ? 'Shared across authorized Zira users and computers. Camera calibration is unchanged.' :
+      'Offline/local review receipts only. Does not change shared cloud reviews or device calibration.' };
   return report.movement;
 }
 

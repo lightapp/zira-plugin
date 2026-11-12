@@ -20,6 +20,7 @@ node scripts/device-status.mjs sites --company-id ID
 node scripts/device-status.mjs check --company-id ID --site-ids A,B|all [--battery-min 20] [--freshness 30]
 node scripts/device-status.mjs movement --company-id ID --site-ids A,B|all [--days 7 | --from ISO --to ISO]
 node scripts/device-status.mjs acknowledge --company-id ID --report FILE --incident-ids ID,ID --note "Reviewed mount" [--apply]
+node scripts/device-status.mjs history --device-ids A,B --out DIRECTORY [--from ISO --to ISO] (Zira admins only)
 node scripts/device-status.mjs schedule --name NAME --company-id ID --site-ids A,B|all
     --frequency daily|weekdays|weekly [--day mon] --time HH:MM --timezone IANA
     [--delivery changes-only|all-runs] [--battery-min 20] [--freshness 30] [--replace]
@@ -130,6 +131,7 @@ export async function main(args = process.argv.slice(2)) {
   if (!args.length || ["help", "--help", "-h"].includes(args[0])) { process.stdout.write(HELP); return; }
   const { values: o } = parseArgs({ args: args.slice(1), options: {
     profile: { type: "string" }, name: { type: "string" }, "company-id": { type: "string" }, "site-ids": { type: "string" },
+    "device-ids": {type:"string"}, "device-id": {type:"string"}, out: {type:"string"},
     days: { type: "string" }, from: { type: "string" }, to: { type: "string" },
     report: { type: "string" }, "incident-ids": { type: "string" }, note: { type: "string" }, apply: { type: "boolean" },
     frequency: { type: "string" }, day: { type: "string" }, time: { type: "string" }, timezone: { type: "string" },
@@ -138,6 +140,10 @@ export async function main(args = process.argv.slice(2)) {
   const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
   const siteIds = () => o["site-ids"] === "all" ? "all" : idList(o["site-ids"]);
   switch (args[0]) {
+    case "history": {
+      const {saveFleetHealthHistory}=await import("../../health-report/scripts/health-history.mjs");
+      return saveFleetHealthHistory({profile,deviceIds:idList(o["device-ids"] ?? o["device-id"]),out:o.out,from:o.from,to:o.to});
+    }
     case "sites": return monitor.sites({ get: await liveClient(profile), companyId: o["company-id"], profile });
     case "check":
       return check({ get: await liveClient(profile), profile, companyId: o["company-id"], siteIds: siteIds(),

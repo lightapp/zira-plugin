@@ -188,7 +188,8 @@ export async function handleTasks({
         });
       } catch (error) {
         const rejected = ledger.actions[actionKey].state === "submitting" &&
-          ((error instanceof ZiraApiError && [401, 403, 429].includes(error.status)) || error.code === "HEALTH_REQUEST_LIMIT");
+          ((error instanceof ZiraApiError && [401, 403, 429].includes(error.status)) ||
+            (!(error instanceof ZiraApiError) && ["HEALTH_REQUEST_LIMIT", "AGENT_PACING_BLOCKED"].includes(error.code)));
         if (rejected) delete ledger.actions[actionKey];
         else ledger.actions[actionKey] = { ...ledger.actions[actionKey], state: "uncertain" };
         items.push({

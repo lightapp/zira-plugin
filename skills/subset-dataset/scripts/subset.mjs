@@ -119,8 +119,10 @@ function manualUpload(origin, ds, file, name) {
 
 // Add a subset ZIP to Zira as a new dataset of the camera, as zira-web's Add dataset does:
 // signed upload → the ZIP becomes a dataset version file on the device → import it into a new folder.
+// build-dataset reuses it with its own origin label and a check that runs once, under the receipt lock, before the first upload.
 export async function upload({ call, file, name, deviceId, origin, apply = false, receipts, env = process.env,
-  fetchImpl = globalThis.fetch, blob = openAsBlob, poll = { everyMs: 3000, maxMs: 10 * 60 * 1000 }, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  fetchImpl = globalThis.fetch, blob = openAsBlob, poll = { everyMs: 3000, maxMs: 10 * 60 * 1000 },
+  sleep = ms => new Promise(r => setTimeout(r, ms)), now = () => performance.now(), source = "zira-plugin-subset", precheck }) {
   if (!NAME.test(String(name ?? ""))) throw new Error("--name must be 1–100 letters, digits, spaces or _ ( ) . -");
   const zip = path.resolve(String(file ?? ""));
   if (!existsSync(zip) || !zip.toLowerCase().endsWith(".zip")) throw new Error("--file must be the subset ZIP");
@@ -138,17 +140,22 @@ export async function upload({ call, file, name, deviceId, origin, apply = false
     key: `dataset-upload:${ds.id}:${fingerprint({ name, sha })}`,
     summary: `Upload ${path.basename(zip)} to ${ds.name} as dataset ${name}`,
     links: () => ({ manual }),
+    precheck,
     run: async progress => {
       const startedAt = Date.now();
       let form;
       try {
+        // IDs go as strings, as zira-web and models.mjs send them: Zira's request schema answers a
+        // numeric deviceId with HTTP 400 01-007 before anything is uploaded.
         form = (await call("POST", "/files/signed-uploads/create", {
-          site: { id: ds.site.id }, ...(ds.companyId ? { company: { id: ds.companyId } } : {}),
+          site: { id: String(ds.site.id) }, ...(ds.companyId ? { company: { id: String(ds.companyId) } } : {}),
           name: path.basename(zip), fileMimeType: "application/zip", fileType: "zip", fileSize: size,
-          deviceId: Number(ds.id), assetType: "dataset", fileSizeLoose: true,
-          originProperties: { originalMimeType: "application/zip", source: "zira-plugin-subset" },
+          deviceId: String(ds.id), assetType: "dataset", fileSizeLoose: true,
+          originProperties: { originalMimeType: "application/zip", source },
         }))?.data;
       } catch (error) {
+        if (error?.code === "AGENT_ROUTE_UNAVAILABLE")
+          throw new Blocked("upload_not_enabled", "Dataset ZIP upload is not available through agent sign-in; no upload request was sent and nothing was uploaded. The user can add it on the open Datasets tab.", { manual });
         if (error instanceof ZiraApiError && [401, 403].includes(error.status))
           throw new Blocked("upload_not_enabled", `Zira did not allow uploading with plugin sign-in (HTTP ${error.status}); nothing was uploaded. The user can add it on the open Datasets tab.`, { manual });
         throw error;
@@ -159,14 +166,22 @@ export async function upload({ call, file, name, deviceId, origin, apply = false
       const body = new FormData();
       for (const [k, v] of Object.entries(form.signedUrl.fields)) body.append(k, String(v));
       body.append("file", await blob(zip), path.basename(zip));
+      // Preserve the receipt before storage can accept bytes. Subsequent pacing,
+      // read-back or network failures must never make this upload replayable.
+      await progress({ uploadStarted: true });
       const sent = await fetchImpl(target.href, { method: "POST", body });
       if (!sent.ok) throw new Error(`Upload to storage failed (HTTP ${sent.status})`);
       // Zira attaches the ZIP to the camera asynchronously; wait for the version file to appear.
+      // Include pacing and read time, not only the explicit polling sleeps.
+      const deadline = now() + poll.maxMs;
       let zipFile = null;
       for (let waited = 0; !zipFile && waited <= poll.maxMs; waited += poll.everyMs) {
+        if (waited > 0 && now() >= deadline) break;
         const rows = (await loadDevice(call, ds.id)).cv?.datasets ?? [];
         zipFile = rows.find(r => uploadedMatches(path.basename(zip), r) && Date.parse(r.createdDate ?? 0) >= startedAt - 60000);
-        if (!zipFile) await sleep(poll.everyMs);
+        const remaining = deadline - now();
+        if (!zipFile && remaining > 0) await sleep(Math.min(poll.everyMs, remaining));
+        if (remaining <= 0) break;
       }
       if (!zipFile) throw new Error("The ZIP was uploaded but Zira has not attached it to the camera yet");
       await progress({ zipFile: String(zipFile.id) });
@@ -175,6 +190,10 @@ export async function upload({ call, file, name, deviceId, origin, apply = false
         result: { pageUrl: manual.pageUrl, zipFile: String(zipFile.id),
           note: "Zira is importing the ZIP into the new dataset; it appears on the Datasets tab within a few minutes." } };
     },
+  }).catch(error => {
+    if (error?.reason === "unverified_write" && error.details?.created?.uploadStarted)
+      throw new Blocked("unverified_write", "The storage upload was started, but its final outcome is not verified. Check the camera's Datasets tab before any retry; do not upload again automatically.", error.details);
+    throw error;
   });
 }
 

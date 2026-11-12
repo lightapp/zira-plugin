@@ -29,4 +29,6 @@ Show, then work: as soon as the data source is known, open its most relevant pag
    - Say "opened dataset X" only after a browser tool or `--launch` (`launched: true`) actually opened it; otherwise say "here is the link".
 5. **Evaluation.** For "evaluate" or "how good is this model" requests, follow the `evaluate-model` skill: it opens the Models page first, checks the model's classes, and runs the model on the version's images on this computer. Never present opening pages or Zira's recorded training metrics as an evaluation.
 
+To list a camera's trainings with their metrics and logs, merge datasets into a new version, or start or stop a training in chat, use train-model when this build includes it; otherwise open the Training or Datasets tab.
+
 Opening a page never means a model ran, labels changed or anything was published. Setup progress uses setup-vision. Offline nail/ring image analysis uses inspect-nail-images.

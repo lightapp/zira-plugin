@@ -15,6 +15,7 @@ import { liveClient } from "../../health-report/scripts/api.mjs";
 import { PROFILES, assertConfig, statusOnly } from "../../health-report/scripts/config.mjs";
 import { statusWarnings } from "../../health-report/scripts/status.mjs";
 import { readJson, writePrivate } from "../../health-report/scripts/storage.mjs";
+import { attachPacingCoordinator, IPC_ENV, IPC_MARKER, runtimeAgentPacer } from "../../health-report/scripts/vendor/zira-agent-toolkit/pacing-ipc.js";
 
 const ENGINE = fileURLToPath(new URL("../../health-report/scripts/health-report.mjs", import.meta.url));
 
@@ -131,15 +132,18 @@ export function handoff(config, meta) {
 }
 
 // Runs the health engine on a saved configuration file; exit 3 (partial coverage) still yields a report.
-export async function runEngine({ configFile, out, state, profile, engine = ENGINE, spawnImpl = spawn }) {
+export async function runEngine({ configFile, out, state, profile, engine = ENGINE, spawnImpl = spawn, pacer = runtimeAgentPacer() }) {
   const args = [engine, "run", "--config", configFile, "--out", out, "--state", state, "--profile", profile];
   const { code, stdout, stderr } = await new Promise((resolve, reject) => {
-    const child = spawnImpl(process.execPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnImpl(process.execPath, args, { stdio: ["ignore", "pipe", "pipe", "ipc"], env: { ...process.env, [IPC_ENV]: IPC_MARKER } });
+    // Under MCP this pacer relays to the original parent; standalone schedules use
+    // this process's singleton. Nested reports never receive an independent budget.
+    const pacing = attachPacingCoordinator(child, pacer);
     let o = "", e = "";
     child.stdout.on("data", d => { o += d; });
     child.stderr.on("data", d => { e += d; });
-    child.on("error", reject);
-    child.on("close", c => resolve({ code: c, stdout: o, stderr: e }));
+    child.on("error", error => { pacing.close(); reject(error); });
+    child.on("close", c => { pacing.close(); resolve({ code: c, stdout: o, stderr: e }); });
   });
   let result;
   try { result = JSON.parse(stdout); } catch { result = null; }

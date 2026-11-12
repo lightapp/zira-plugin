@@ -31,9 +31,9 @@ Environment:
 
 Examples:
   zira login
-  zira request GET /users/me
-  zira request POST /tasks --data '{"name":"Inspect line 1"}'
-  curl -H "Authorization: $(zira token)" https://api.zira.us/users/me
+  zira request GET /users/details
+  zira request GET /tasks/list
+  zira request POST /tasks/new --data-file reviewed-task.json
 `;
 
 const takeOption = (args, name, { repeat = false } = {}) => {

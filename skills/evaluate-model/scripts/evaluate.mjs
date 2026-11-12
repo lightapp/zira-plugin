@@ -22,7 +22,7 @@ node scripts/evaluate.mjs setup [--with-pt]
 node scripts/evaluate.mjs fetch --device-id ID --file-id ID [--profile prod|integ] [--web-origin URL]
 node scripts/evaluate.mjs find-download --name FILE [--dir DIR] [--since ISO]
 node scripts/evaluate.mjs run --dataset ZIP_OR_DIR --model FILE [--split val|test|train|all]
-    [--limit N] [--allow-class-mismatch]
+    [--limit N] [--allow-class-mismatch] [--confidence 0.25] [--nms-iou 0.45] [--match-iou 0.5]
 node scripts/evaluate.mjs open --report REPORT.html
 node scripts/evaluate.mjs local-files [--dir DIR]
 node scripts/evaluate.mjs choose --kind dataset|folder|model
@@ -250,8 +250,23 @@ export function summarizeReport(report, reportPath) {
   };
 }
 
-export async function runEvaluation({ dataset, model, split = "val", limit, allowClassMismatch = false, modelClasses, env = process.env, execImpl = exec } = {}) {
+// Thresholds a run may set; the evaluator's defaults (0.25, 0.45, 0.5) apply otherwise. Cloud evaluation jobs
+// take the same three, so a local run can repeat a cloud one exactly.
+export const THRESHOLDS = [["confidence", "--confidence"], ["nmsIou", "--nms-iou"], ["matchIou", "--match-iou"]];
+export function thresholdArgs(values = {}) {
+  const args = [];
+  for (const [key, flag] of THRESHOLDS) {
+    if (values[key] === undefined || values[key] === null || values[key] === "") continue;
+    const n = Number(values[key]);
+    if (!Number.isFinite(n) || n < 0 || n > 1) throw new Error(`${flag} must be a number from 0 to 1`);
+    args.push(flag, String(n));
+  }
+  return args;
+}
+
+export async function runEvaluation({ dataset, model, split = "val", limit, allowClassMismatch = false, modelClasses, thresholds, env = process.env, execImpl = exec } = {}) {
   if (!dataset || !model) throw new Error("--dataset and --model are required");
+  const extra = thresholdArgs(thresholds);
   const suffix = path.extname(model).toLowerCase();
   if (suffix === ".pt" && !allowsPt()) throw new Blocked("model_format", "This public build supports .tflite models only; .pt support is not released.");
   const p = paths(env);
@@ -268,7 +283,7 @@ export async function runEvaluation({ dataset, model, split = "val", limit, allo
     : Array.isArray(recorded?.labels) && recorded.labels.every(l => typeof l === "string" && l && !l.includes(",")) ? recorded.labels : null;
   const args = [FILES.evaluator, "--dataset", path.resolve(dataset), "--model", path.resolve(model), "--split", split,
     "--work-dir", p.datasets, "--out", out, "--html", out.replace(/\.json$/, ".html"), "--progress", ...(limit ? ["--limit", String(limit)] : []),
-    ...(allowClassMismatch ? ["--allow-class-mismatch"] : []), ...(labels ? ["--model-classes", labels.join(",")] : [])];
+    ...(allowClassMismatch ? ["--allow-class-mismatch"] : []), ...(labels ? ["--model-classes", labels.join(",")] : []), ...extra];
   let last = 0;
   const r = await execImpl(runtimePython(p), args, { onLine: line => {
     // Relay progress about every 10% so a long run shows it is moving.
@@ -385,6 +400,7 @@ export async function main(args = process.argv.slice(2)) {
     dataset: { type: "string" }, model: { type: "string" }, split: { type: "string" }, limit: { type: "string" },
     "allow-class-mismatch": { type: "boolean" }, "with-pt": { type: "boolean" }, report: { type: "string" },
     "model-classes": { type: "string" }, kind: { type: "string" },
+    confidence: { type: "string" }, "nms-iou": { type: "string" }, "match-iou": { type: "string" },
   } });
   switch (args[0]) {
     case "status": return status();
@@ -398,7 +414,8 @@ export async function main(args = process.argv.slice(2)) {
       if (o.split && !["train", "val", "test", "all"].includes(o.split)) throw new Error("--split must be train, val, test or all");
       if (o.limit && !/^[1-9]\d*$/.test(o.limit)) throw new Error("--limit must be a positive number");
       return runEvaluation({ dataset: o.dataset, model: o.model, split: o.split, limit: o.limit,
-        allowClassMismatch: !!o["allow-class-mismatch"], modelClasses: o["model-classes"] });
+        allowClassMismatch: !!o["allow-class-mismatch"], modelClasses: o["model-classes"],
+        thresholds: { confidence: o.confidence, nmsIou: o["nms-iou"], matchIou: o["match-iou"] } });
     }
     case "fetch": {
       const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";

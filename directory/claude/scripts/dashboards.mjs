@@ -8,6 +8,7 @@ import {
   Blocked, argValue, fingerprint, guardedWrite, id, idList, isMain, link, listAll, liveSession, normalizeName,
   originFor, receiptsFile, resolveSite, route, runCli, siteDataSources, text,
 } from "./client.mjs";
+import { argumentDevice, resaveBody, verifyWidget } from "./dashboard-widgets.mjs";
 
 const HELP = `Zira dashboards — start a next-generation dashboard
 node scripts/dashboards.mjs create --company-id ID --site-id ID --name TEXT
@@ -18,6 +19,9 @@ node scripts/dashboards.mjs copy-mapping --company-id ID --site-id ID --dashboar
 node scripts/dashboards.mjs copy --company-id ID --site-id ID --dashboard-id ID [--name TEXT]
     [--target-company-id ID] [--target-site-id ID] [--mapping FILE]
     [--apply] [--allow-repeat] [--resolve-pending none|ID] [--receipts FILE]
+node scripts/dashboards.mjs fix-copy --company-id ID --site-id ID --dashboard-id ID --copy-id ID
+    [--target-company-id ID] [--target-site-id ID] [--mapping FILE]
+    [--apply] [--allow-repeat] [--resolve-pending none|ID] [--receipts FILE]
 Common: --profile prod|integ
 
 RANGE: ${"today yesterday this-week last-week last-7-days last-14-days last-21-days last-30-days last-60-days last-365-days last-60-minutes"}
@@ -26,10 +30,13 @@ INTERVAL: last-reading 1-minute 5-minutes 15-minutes hourly daily weekly monthly
 create previews by default. --apply creates one dashboard with those data sources and
 reads it back. Use dashboard-widgets.mjs context/save to author native widgets in chat.
 copy-mapping reads (writes nothing in Zira) the source dashboard's data sources, the metrics its
-widgets use and the target site's data sources of the same kind, and proposes a mapping
-(--out saves it). copy previews a duplicate of a next-generation dashboard (default name
-"<name> (copy)"); in the same site every data source maps to itself, another site needs
---mapping. --apply copies it once and reads it back.
+widgets use and the target site's data sources of the same kind, and proposes a one-to-one
+mapping: the same unit by name (type and number, camera suffixes ignored), then matching metrics.
+Equal fits are listed as ambiguous and left out of the mapping (--out saves it). copy previews a
+duplicate of a next-generation dashboard (default name "<name> (copy)"); in the same site every
+data source maps to itself, another site needs --mapping. --apply copies it once, re-saves the
+widgets whose description or chart data source Zira's Duplicate lost, and reads it back.
+fix-copy previews (--apply makes) that restore for an existing copy (--copy-id) of the source.
 Exit 0 success, 2 invalid/failed, 3 unverified write, 4 blocked (JSON explains).
 `;
 
@@ -45,7 +52,7 @@ export const INTERVALS = {
 export const ROUTES = [
   ["GET", /^\/sites\/list$/], ["GET", /^\/devices\/list$/], ["GET", /^\/dashboards\/list$/],
   ["GET", /^\/dashboards\/[1-9]\d*$/], ["POST", /^\/dashboards\/new$/],
-  ["GET", /^\/devices\/all$/], ["POST", /^\/dashboards\/copy$/],
+  ["GET", /^\/devices\/all$/], ["POST", /^\/dashboards\/copy$/], ["PUT", /^\/dashboards\/widgets\/[1-9]\d*$/],
 ];
 const MAX_DATA_SOURCES = 50;
 
@@ -163,7 +170,7 @@ const METRIC_LISTS = new Set(["groupBy", "columnsSelected"]);
 // Built-in dimensions every data source has; the copy keeps them as they are.
 const BUILT_IN = /^(event_date.*|meter_id|meter_name|inherit_from_widget)$/;
 const NOT_COPIED_DASHBOARD = ["sharing and bookmarks", "channel links", "AI reports and their schedules", "the data table",
-  "widget descriptions", "locked and private settings (the copy is unlocked and not private)"];
+  "locked and private settings (the copy is unlocked and not private)"];
 
 function widgetSettings(dashboard) {
   return (dashboard.widgets ?? []).flatMap(w => (w.components ?? []).flatMap(c => (c.arguments ?? [])
@@ -209,6 +216,47 @@ export function matchMetric(metric, targetMetrics) {
   return { target: null, how: "unresolved", candidates: targetMetrics.filter(t => t.unit === metric.unit).slice(0, 15) };
 }
 
+// A data source's unit from its name: type words and numbers without a camera suffix or prefix,
+// so "Band Saw 1", "Bandsaw 1 | Cam 44", "Cam 44 - Bandsaw 1" and "BANDSAW-1" are the same saw
+// while "Cam 1 Quality" keeps its camera number.
+export function unitKey(name) {
+  const lower = String(name ?? "").toLowerCase();
+  const bare = lower.replace(/\s*[|(\-–,]?\s*\bcam(?:era)?\s*[#-]?\s*\d+\s*\)?\s*$/u, "")
+    .replace(/^\s*\(?cam(?:era)?\s*[#-]?\s*\d+\s*\)?\s*[|:\-–,)]\s*/u, "");
+  const plain = (/\p{L}/u.test(bare) ? bare : lower).replace(/(\p{L}+)[\s_-]+saw\b/gu, "$1saw")
+    .replace(/(\p{L})(\p{N})/gu, "$1 $2").replace(/(\p{N})(\p{L})/gu, "$1 $2");
+  const tokens = plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const number = t => /^\p{N}+$/u.test(t);
+  return { words: tokens.filter(t => !number(t)).join(" "), numbers: tokens.filter(number).map(t => String(Number(t))).join(" ") };
+}
+
+// 3 same name, 2 same type and number, 1 only the same number, 0 nothing in common.
+export function nameMatch(a, b) {
+  if (normalizeName(a) === normalizeName(b)) return 3;
+  const x = unitKey(a), y = unitKey(b);
+  if ((x.words || x.numbers) && x.words === y.words && x.numbers === y.numbers) return 2;
+  return x.numbers && x.numbers === y.numbers ? 1 : 0;
+}
+
+// The same unit by name outranks metric coverage, which outranks a shared number alone.
+const rankOf = (name, coverage) => [name >= 2 ? name : 0, coverage, name === 1 ? 1 : 0];
+const compareRank = (a = [], b = []) => { for (let i = 0; i < 3; i++) if ((a[i] ?? -1) !== (b[i] ?? -1)) return (a[i] ?? -1) - (b[i] ?? -1); return 0; };
+
+// One target per source: the strongest evidence chooses first. Equal fits stay unchosen for review,
+// so several sources never collapse onto one target.
+export function assignTargets(entries) {
+  const taken = new Set();
+  const order = [...entries].sort((a, b) => compareRank(b.scored[0]?.rank, a.scored[0]?.rank));
+  for (const e of order) {
+    const open = e.scored.filter(s => !taken.has(String(s.device.id)) && (s.resolved > 0 || s.name >= 2 || !e.usedHere.length));
+    const ties = open.filter(s => compareRank(s.rank, open[0].rank) === 0);
+    if (ties.length > 1) e.ties = ties;
+    else if (open.length) { e.best = open[0]; taken.add(String(open[0].device.id)); }
+    else e.allTaken = e.scored.length > 0;
+  }
+  return entries;
+}
+
 async function describeDevices(call, ids) {
   const out = new Map();
   for (let i = 0; i < ids.length; i += 10) {
@@ -247,7 +295,7 @@ export async function copyMapping({ call, profile = "prod", companyId, siteId, d
   const kinds = new Set(sourceIds.map(s => String(described.get(s)?.applying?.id ?? "")));
   const candidateIds = [...new Set([...kinds, ""].flatMap(k => (byKind.get(k) ?? []).map(d => String(d.id))))];
   const targets = target.id === site.id ? described : await describeDevices(call, candidateIds.slice(0, 60));
-  const devices = sourceIds.map(sid => {
+  const entries = assignTargets(sourceIds.map(sid => {
     const src = described.get(sid) ?? { id: sid, name: (source.devices ?? []).find(d => String(d.id) === sid)?.name };
     const metrics = schemaMetrics(src);
     const usedHere = metrics.filter(m => used.has(m.id)).map(m => ({ ...m, widgets: [...used.get(m.id)].slice(0, 8) }));
@@ -257,33 +305,160 @@ export async function copyMapping({ call, profile = "prod", companyId, siteId, d
       const tm = schemaMetrics(t);
       const matches = usedHere.map(m => ({ source: m, ...matchMetric(m, tm) }));
       const resolved = matches.filter(m => m.target).length;
-      const sameName = normalizeName(t.name) === normalizeName(src.name);
-      return { device: t, matches, resolved, sameName, score: (usedHere.length ? resolved / usedHere.length : 1) + (sameName ? 0.5 : 0) };
-    }).sort((a, b) => b.score - a.score);
-    const best = scored[0] && (scored[0].resolved > 0 || scored[0].sameName || !usedHere.length) ? scored[0] : null;
-    return {
-      source: { id: sid, name: String(src.name ?? ""), kind: src.applying?.name ?? null, metricsUsedByWidgets: usedHere },
-      proposed: best ? { id: String(best.device.id), name: String(best.device.name ?? "") } : null,
-      reason: best ? `${best.resolved}/${usedHere.length} metrics matched${best.sameName ? ", same name" : ""}`
-        : "No data source of the same kind at the target; Zira will copy this one there (\"Copy of\").",
-      metrics: (best?.matches ?? []).map(m => ({ source: m.source.id, sourceName: m.source.name, unit: m.source.unit,
-        target: m.target?.id ?? null, targetName: m.target?.name ?? null, how: m.how,
-        ...(m.candidates ? { candidates: m.candidates.map(c => ({ id: c.id, name: c.name })) } : {}) })),
-      alternatives: scored.slice(1, 4).map(s => ({ id: String(s.device.id), name: String(s.device.name ?? ""), metricsMatched: `${s.resolved}/${usedHere.length}` })),
-    };
-  });
+      const name = nameMatch(src.name, t.name);
+      return { device: t, matches, resolved, name, rank: rankOf(name, usedHere.length ? resolved / usedHere.length : 1) };
+    }).sort((a, b) => compareRank(b.rank, a.rank));
+    return { sid, src, usedHere, scored };
+  }));
+  const matched = s => `${s.resolved}/${s.matches.length} metrics matched`;
+  const sameUnit = (s, src) => s.name === 3 ? ", same name" : s.name === 2 ? `, same type and number (${Object.values(unitKey(src.name)).filter(Boolean).join(" ")})`
+    : s.name === 1 ? ", same number" : "";
+  const remap = s => Object.fromEntries(s.matches.filter(m => m.target && m.target.id !== m.source.id).map(m => [m.source.id, m.target.id]));
+  const devices = entries.map(({ sid, src, usedHere, scored, best, ties, allTaken }) => ({
+    source: { id: sid, name: String(src.name ?? ""), kind: src.applying?.name ?? null, metricsUsedByWidgets: usedHere },
+    proposed: best ? { id: String(best.device.id), name: String(best.device.name ?? "") } : null,
+    ...(ties ? { ambiguous: true, candidates: ties.map(s => ({ id: String(s.device.id), name: String(s.device.name ?? ""), metricsMatched: `${s.resolved}/${usedHere.length}`,
+      ...(Object.keys(remap(s)).length ? { metricMapping: remap(s) } : {}) })) } : {}),
+    reason: best ? `${matched(best)}${sameUnit(best, src)}`
+      : ties ? `${ties.length} data sources fit equally (${ties.map(s => s.device.name).join(", ")}). Choose one; it is left out of deviceMapping until then.`
+      : allTaken ? "Every fitting data source at the target is already proposed for another source. Choose one, or null to have Zira copy this one there (\"Copy of\")."
+      : "No data source of the same kind at the target; Zira will copy this one there (\"Copy of\").",
+    metrics: (best?.matches ?? []).map(m => ({ source: m.source.id, sourceName: m.source.name, unit: m.source.unit,
+      target: m.target?.id ?? null, targetName: m.target?.name ?? null, how: m.how,
+      ...(m.candidates ? { candidates: m.candidates.map(c => ({ id: c.id, name: c.name })) } : {}) })),
+    alternatives: scored.filter(s => s !== best && !ties?.includes(s)).slice(0, 3)
+      .map(s => ({ id: String(s.device.id), name: String(s.device.name ?? ""), metricsMatched: `${s.resolved}/${usedHere.length}` })),
+  }));
   const mapping = {
-    deviceMapping: Object.fromEntries(devices.map(d => [d.source.id, d.proposed?.id ?? null])),
+    deviceMapping: Object.fromEntries(devices.filter(d => !d.ambiguous).map(d => [d.source.id, d.proposed?.id ?? null])),
     metricMapping: Object.fromEntries(devices.flatMap(d => d.metrics.filter(m => m.target && m.target !== m.source).map(m => [m.source, m.target]))),
   };
+  const names = new Map([...devices.map(d => [d.source.id, d.source.name]), ...[...targets.values()].map(d => [String(d.id), String(d.name ?? "")])]);
+  const ambiguous = devices.filter(d => d.ambiguous).map(d => ({ dataSource: d.source.name, id: d.source.id, candidates: d.candidates.map(c => c.name) }));
   return {
     kind: "dashboard-copy-mapping", profile,
     source: { id: dashboardId, name: String(source.name ?? ""), site: { id: site.id, name: site.name }, widgets: (source.widgets ?? []).length },
     target: { siteId: target.id, siteName: target.name, sameSite: target.id === site.id },
     devices, mapping,
+    ...(ambiguous.length ? { ambiguous } : {}),
     unresolved: devices.flatMap(d => d.metrics.filter(m => !m.target).map(m => ({ dataSource: d.source.name, metric: m.sourceName, unit: m.unit }))),
-    note: "Review the proposal: confirm each data source and every unresolved metric, edit mapping if needed, then pass it to copy --mapping. A widget whose metric stays unresolved keeps the source metric and may show no data.",
+    widgets: widgetPlan(source, mapping.deviceMapping, names),
+    note: "Review the proposal: confirm each data source (choose one for every ambiguous source; copy refuses a mapping without it) and every unresolved metric, edit mapping if needed, then pass it to copy --mapping. A widget whose metric stays unresolved keeps the source metric and may show no data. widgets shows what the copy restores after Zira's Duplicate: each widget's description and its chart's data source.",
   };
+}
+
+// ---- After Zira's Duplicate (copy_dashboard): it drops widget descriptions and keeps each chart
+// argument's source data source. The plugin re-saves those widgets through the widget update route.
+
+// The data source a copied widget's chart argument should name: the mapped one for a data source of
+// the source dashboard; a chart's placeholder (Zira web saves a fixed ID) becomes the mapped first
+// data source, as dashboard-widgets.mjs saves it. undefined: not known yet (unmapped or ambiguous).
+function targetDevice(widget, deviceMapping, firstSource) {
+  const from = argumentDevice(widget);
+  if (from == null) return { from, to: null };
+  const key = Object.hasOwn(deviceMapping, from) ? from : String(widget.type?.id) === "15" ? firstSource : null;
+  return { from, to: key != null && Object.hasOwn(deviceMapping, key) ? deviceMapping[key] : undefined };
+}
+
+// What the copy restores per widget, from the source dashboard and a (proposed) mapping.
+export function widgetPlan(source, deviceMapping, names = new Map()) {
+  const first = String(source.devices?.[0]?.id ?? "");
+  const label = v => v == null ? null : { id: String(v), name: names.get(String(v)) ?? null };
+  return (source.widgets ?? []).map(w => {
+    const { from, to } = targetDevice(w, deviceMapping, first);
+    const description = typeof w.description === "string" && w.description.trim() ? w.description : null;
+    const check = resaveBody(w, { device: from });
+    return { widget: String(w.name ?? ""), type: w.type?.name ?? null, description: description ? "kept" : null,
+      ...(from != null ? { device: { from: label(from), to: to === undefined ? "choose the mapping first" : to === null ? "the copy Zira makes" : label(to) } } : {}),
+      ...(check.skip && (description || (from != null && to !== from)) ? { notRestored: check.skip } : {}) };
+  });
+}
+
+// Data sources the copy holds for sources mapped to null (Zira created them): by name, or the only one left.
+export function resolveCreated(sources, deviceMapping, copyDevices) {
+  const full = {};
+  for (const s of sources) if (deviceMapping[s.id] != null) full[s.id] = String(deviceMapping[s.id]);
+  const mapped = new Set(Object.values(full));
+  const left = copyDevices.filter(d => !mapped.has(String(d.id)));
+  const open = sources.filter(s => Object.hasOwn(deviceMapping, s.id) && deviceMapping[s.id] === null);
+  for (const s of open) {
+    const named = left.filter(d => normalizeName(d.name).includes(normalizeName(s.name)));
+    const pick = named.length === 1 ? named[0] : open.length === 1 && left.length === 1 ? left[0] : null;
+    if (pick) full[s.id] = String(pick.id);
+  }
+  return full;
+}
+
+// meter_id filter values anywhere in the settings must name the copy's data sources (widget guard).
+const meterIds = value => Array.isArray(value) ? value.flatMap(meterIds) : value && typeof value === "object"
+  ? [...(value.metric === "meter_id" && typeof value.filterValue === "string" ? value.filterValue.split(",").map(v => v.trim()) : []),
+    ...Object.values(value).flatMap(meterIds)] : [];
+
+// Pair copied widgets with their source widgets (Zira keeps names and types) and plan the re-saves.
+// Only empty descriptions and the untouched source data source are changed, never later edits.
+export function planCopyFixes({ source, copy, deviceMapping }) {
+  const first = String(source.devices?.[0]?.id ?? "");
+  const onCopy = new Set((copy.devices ?? []).map(d => String(d.id)));
+  const groups = new Map();
+  for (const [side, list] of [["source", source.widgets], ["copy", copy.widgets]]) for (const w of list ?? []) {
+    const key = `${w.type?.id}\u0000${w.name}`;
+    if (!groups.has(key)) groups.set(key, { source: [], copy: [] });
+    groups.get(key)[side].push(w);
+  }
+  const fixes = [], skipped = [];
+  for (const g of groups.values()) {
+    const byId = (a, b) => Number(a.id) - Number(b.id);
+    g.source.sort(byId); g.copy.sort(byId);
+    const wants = g.source.map(w => ({ description: typeof w.description === "string" ? w.description : "", ...targetDevice(w, deviceMapping, first) }));
+    const name = String((g.source[0] ?? g.copy[0]).name ?? "");
+    if (!g.source.length) continue;
+    if (g.source.length !== g.copy.length) { skipped.push({ widget: name, reason: `${g.source.length} in the source and ${g.copy.length} in the copy` }); continue; }
+    if (new Set(wants.map(x => JSON.stringify([x.description, x.from, x.to]))).size > 1) {
+      skipped.push({ widget: name, reason: "several widgets share this name and type; cannot tell which copy is which" }); continue;
+    }
+    g.copy.forEach((w, i) => {
+      const want = wants[i], current = argumentDevice(w), changes = {};
+      if (!(w.description ?? "").trim() && want.description.trim()) changes.description = want.description;
+      if (want.to != null && current === want.from && String(want.to) !== current) changes.device = { from: current, to: String(want.to) };
+      if (!Object.keys(changes).length) return;
+      const entry = { widgetId: String(w.id), widget: String(w.name ?? ""), changes };
+      const r = resaveBody(w, { description: changes.description ?? w.description ?? "", device: changes.device?.to ?? current });
+      const s = r.body?.components?.[0]?.arguments?.[0]?.nextGenWidgetSettings;
+      const outside = [r.body?.components?.[0]?.arguments?.[0]?.device?.id, String(w.type?.id) === "17" ? s?.device : null, ...meterIds(s)]
+        .filter(v => v != null && !onCopy.has(String(v)));
+      if (r.skip) skipped.push({ ...entry, reason: r.skip });
+      else if (outside.length) skipped.push({ ...entry, reason: `it names data sources that are not on the copy (${[...new Set(outside)].join(", ")})` });
+      else fixes.push({ ...entry, body: r.body });
+    });
+  }
+  return { fixes, skipped };
+}
+
+const bodyDevice = body => { const v = body.components?.[0]?.arguments?.[0]?.device?.id; return v == null ? null : String(v); };
+
+// Re-save each planned widget once, stop on an authorization denial, then read the copy back.
+export async function applyCopyFixes(call, dashboardId, fixes) {
+  const updated = [], failed = [];
+  for (const f of fixes) {
+    try {
+      await call("PUT", `/dashboards/widgets/${f.widgetId}`, f.body);
+      updated.push(f);
+    } catch (error) {
+      failed.push({ widgetId: f.widgetId, widget: f.widget, error: error.status ? `HTTP ${error.status}` : error.message });
+      if ([401, 403].includes(error.status)) break;
+    }
+  }
+  const notTried = fixes.slice(updated.length + failed.length).map(f => ({ widgetId: f.widgetId, widget: f.widget }));
+  let saved = null, readBack = null;
+  if (updated.length) try { saved = (await call("GET", `/dashboards/${dashboardId}`)).data ?? null; } catch (error) {
+    readBack = `Read-back failed (${error.status ? `HTTP ${error.status}` : error.message})`;
+  }
+  const unverified = updated.filter(f => {
+    const actual = saved?.widgets?.find(w => String(w.id) === f.widgetId);
+    return !actual || (actual.description ?? "") !== (f.body.description ?? "") || argumentDevice(actual) !== bodyDevice(f.body) || !verifyWidget(actual, f.body);
+  }).map(f => ({ widgetId: f.widgetId, widget: f.widget }));
+  return { updated: updated.map(f => ({ widgetId: f.widgetId, widget: f.widget, ...f.changes })), failed, notTried, unverified,
+    complete: !failed.length && !notTried.length && !unverified.length, ...(readBack ? { readBack } : {}) };
 }
 
 const readMapping = async file => {
@@ -307,10 +482,7 @@ export async function copyDashboard({
   const chosen = sameSite && !mapping ? Object.fromEntries(sources.map(s => [s.id, s.id])) : mapping?.deviceMapping;
   if (!chosen) throw new Error("A copy to another site needs --mapping (run copy-mapping, review it, then pass the file)");
   const keys = Object.keys(chosen).filter(k => id(k));
-  if (keys.length !== sources.length || !sources.every(s => keys.includes(s.id)))
-    throw new Error("The mapping must list every data source of the source dashboard, and only those");
-  const targetIds = [...new Set(Object.values(chosen).filter(v => v !== null).map(String))];
-  if (!targetIds.every(id)) throw new Error("Mapped data sources must be IDs or null");
+  const targetIds = checkedTargets(chosen, sources);
   const inventory = sameSite ? new Map(sources.map(s => [s.id, s])) : new Map((await siteDataSources(call, target)).map(d => [String(d.id), d]));
   const outside = targetIds.filter(t => !inventory.has(t));
   if (outside.length) throw new Blocked("scope", `Some mapped data sources are not at ${target.name}`, { outside });
@@ -323,7 +495,8 @@ export async function copyDashboard({
     const missing = Object.values(metricMapping).filter(m => !available.has(m));
     if (missing.length) throw new Blocked("scope", "Some mapped metrics are not on the mapped target data sources", { missing });
   }
-  const deviceMapping = { ...Object.fromEntries(keys.map(k => [k, chosen[k] === null ? null : String(chosen[k])])) };
+  const idMapping = Object.fromEntries(keys.map(k => [k, chosen[k] === null ? null : String(chosen[k])]));
+  const deviceMapping = { ...idMapping };
   for (const s of sources) {
     const t = deviceMapping[s.id];
     if (t && s.name) deviceMapping[s.name] = String(inventory.get(t)?.name ?? s.name);
@@ -337,6 +510,8 @@ export async function copyDashboard({
     name: targetName,
     dataSources: sources.map(s => ({ from: s.name, to: deviceMapping[s.id] === null ? `a copy of ${s.name} at ${target.name}` : String(inventory.get(deviceMapping[s.id])?.name ?? deviceMapping[s.id]) })),
     metricsRemapped: Object.keys(metricMapping).length,
+    afterCopy: afterCopySummary(widgetPlan(source, idMapping, new Map([...sources.map(s => [s.id, s.name]),
+      ...[...inventory.values()].map(d => [String(d.id), String(d.name ?? "")])]))),
     notCopied: NOT_COPIED_DASHBOARD,
     ...(filters.length ? { warning: `Filter widgets (${filters.join(", ")}) may still point at the original dashboard's widgets; check them after copying.` } : {}),
     ...(suggestedName !== targetName ? { nameTaken: true, suggestedName } : {}),
@@ -383,10 +558,21 @@ export async function copyDashboard({
         orphaned = [...usedMetrics(saved)].filter(([m]) => !available.has(m)).map(([m, w]) => ({ metric: m, widgets: [...w] }));
         if (orphaned.length) warnings.push(`${orphaned.length} metric(s) used by widgets are not on the copy's data sources; those widgets may show no data.`);
       }
+      // Restore what Zira's Duplicate drops: widget descriptions and each chart's data source.
+      let widgetFixes = null;
+      if (saved) {
+        const copyDevices = (saved.devices ?? []).map(d => ({ id: String(d.id), name: String(d.name ?? "") }));
+        const plan = planCopyFixes({ source, copy: saved, deviceMapping: resolveCreated(sources, idMapping, copyDevices) });
+        widgetFixes = { ...await applyCopyFixes(call, copyId, plan.fixes), skipped: plan.skipped };
+        if (!widgetFixes.complete)
+          warnings.push(`Not every widget was restored (failed, not tried or unverified). Run fix-copy --copy-id ${copyId} with the same mapping to finish.`);
+        if (plan.skipped.length)
+          warnings.push(`${plan.skipped.length} widget(s) keep Zira's copy as it is: ${plan.skipped.map(x => `${x.widget} (${x.reason})`).join("; ")}.`);
+      }
       const verified = !!saved && String(saved.id) === copyId && String(saved.site?.id ?? "") === target.id &&
         normalizeName(saved.name) === normalizeName(targetName) && (saved.widgets ?? []).length === (source.widgets ?? []).length &&
-        (saved.devices ?? []).length === sources.length;
-      return { receipt: { dashboardId: copyId }, dashboardId: copyId, verified, warnings, orphaned };
+        (saved.devices ?? []).length === sources.length && !!widgetFixes?.complete;
+      return { receipt: { dashboardId: copyId }, dashboardId: copyId, verified, warnings, orphaned, widgetFixes };
     },
   });
   const dashboardIdOut = outcome.dashboardId ?? outcome.receipt?.dashboardId;
@@ -395,7 +581,82 @@ export async function copyDashboard({
     return { kind: "dashboard-copy", profile, applied: false, state: outcome.state, dashboardId: dashboardIdOut, ...links,
       message: "This exact copy was already made; nothing new was written." };
   return { kind: "dashboard-copy", profile, applied: true, state: outcome.verified ? "created" : "unverified", verified: outcome.verified,
-    dashboardId: dashboardIdOut, warnings: outcome.warnings, ...(outcome.orphaned.length ? { orphanedMetrics: outcome.orphaned } : {}), preview, ...links };
+    dashboardId: dashboardIdOut, warnings: outcome.warnings, ...(outcome.orphaned.length ? { orphanedMetrics: outcome.orphaned } : {}),
+    ...(outcome.widgetFixes ? { widgetFixes: outcome.widgetFixes } : {}), preview, ...links };
+}
+
+// Every data source of the source dashboard, and only those, mapped to an ID or null.
+function checkedTargets(chosen, sources) {
+  const keys = Object.keys(chosen).filter(k => id(k));
+  if (keys.length !== sources.length || !sources.every(s => keys.includes(s.id)))
+    throw new Error("The mapping must list every data source of the source dashboard, and only those (copy-mapping leaves out ambiguous ones for you to choose)");
+  const targetIds = [...new Set(Object.values(chosen).filter(v => v !== null).map(String))];
+  if (!targetIds.every(id)) throw new Error("Mapped data sources must be IDs or null");
+  return targetIds;
+}
+
+function afterCopySummary(plan) {
+  const descriptions = plan.filter(w => w.description && !w.notRestored).length;
+  const devices = plan.filter(w => w.device && typeof w.device.to === "object" && w.device.to?.id !== w.device.from.id && !w.notRestored).length;
+  return { descriptions, devices,
+    note: `Zira's Duplicate drops widget descriptions and keeps each chart's source data source. After copying, the plugin re-saves the affected widgets (${descriptions} description(s), ${devices} data source field(s)) with only those changes and reads them back.`,
+    ...(plan.some(w => w.notRestored) ? { notRestored: plan.filter(w => w.notRestored).map(w => ({ widget: w.widget, reason: w.notRestored })) } : {}) };
+}
+
+// Restore an existing copy's widget descriptions and chart data sources from its source dashboard
+// (for copies made by Zira web's Duplicate, or a copy whose restore step did not finish).
+export async function fixCopy({
+  call, profile = "prod", companyId, siteId, dashboardId, targetCompanyId, targetSiteId, copyId, mapping,
+  apply = false, allowRepeat = false, receipts, resolve,
+}) {
+  const site = await resolveSite(call, companyId, siteId);
+  const target = await resolveSite(call, targetCompanyId ?? companyId, targetSiteId ?? siteId);
+  if (!id(copyId ?? "")) throw new Error("--copy-id required: the copied dashboard to restore");
+  if (copyId === dashboardId) throw new Error("--copy-id must be the copy, not the source dashboard");
+  const source = await loadSource(call, site, dashboardId);
+  const copy = await loadSource(call, target, copyId);
+  const sameSite = target.id === site.id;
+  const sources = (source.devices ?? []).map(d => ({ id: String(d.id), name: String(d.name ?? "") })).filter(d => id(d.id));
+  const chosen = sameSite && !mapping ? Object.fromEntries(sources.map(s => [s.id, s.id])) : mapping?.deviceMapping;
+  if (!chosen) throw new Error("A copy at another site needs --mapping (the source → copy data sources)");
+  const copyDevices = (copy.devices ?? []).map(d => ({ id: String(d.id), name: String(d.name ?? "") }));
+  const outside = checkedTargets(chosen, sources).filter(t => !copyDevices.some(d => d.id === t));
+  if (outside.length) throw new Blocked("scope", `Some mapped data sources are not data sources of the copy ${copyId}`, { outside });
+  const idMapping = Object.fromEntries(Object.entries(chosen).filter(([k]) => id(k)).map(([k, v]) => [k, v === null ? null : String(v)]));
+  const full = resolveCreated(sources, idMapping, copyDevices);
+  const plan = planCopyFixes({ source, copy, deviceMapping: full });
+  const names = new Map([...sources, ...copyDevices].map(d => [d.id, d.name]));
+  const label = v => v == null ? null : `${names.get(v) ?? "data source"} (${v})`;
+  const url = link(profile, `/dashboards/${copyId}`);
+  const preview = {
+    source: { id: dashboardId, name: String(source.name ?? ""), siteName: site.name },
+    copy: { id: copyId, name: String(copy.name ?? ""), siteName: target.name, url },
+    changes: plan.fixes.map(f => ({ widgetId: f.widgetId, widget: f.widget, ...(f.changes.description ? { description: f.changes.description } : {}),
+      ...(f.changes.device ? { device: `${label(f.changes.device.from)} → ${label(f.changes.device.to)}` } : {}) })),
+    ...(plan.skipped.length ? { skipped: plan.skipped.map(({ widgetId, widget, reason }) => ({ widgetId, widget, reason })) } : {}),
+    note: "Only empty descriptions and chart data sources still on the source's data source change; every other widget setting is saved back as Zira has it.",
+  };
+  if (!apply) return { kind: "dashboard-copy-fix-draft", profile, preview, applied: false };
+  if (!plan.fixes.length) return { kind: "dashboard-copy-fix", profile, applied: false, state: "nothing-to-do", url, preview };
+  const outcome = await guardedWrite({
+    file: receipts, allowRepeat, resolve, resolveField: "dashboardId",
+    key: fingerprint({ op: "dashboard-copy-fix", profile, copyId, fixes: plan.fixes.map(f => [f.widgetId, f.body]) }),
+    summary: { kind: "dashboard-copy-fix", dashboardId: copyId, siteId: target.id, widgets: plan.fixes.length },
+    reconcile: async () => {
+      const now = (await call("GET", `/dashboards/${copyId}`)).data ?? {};
+      return planCopyFixes({ source, copy: now, deviceMapping: full }).fixes.length ? null : { dashboardId: copyId };
+    },
+    run: async () => {
+      const result = await applyCopyFixes(call, copyId, plan.fixes);
+      return { receipt: { dashboardId: copyId, updated: result.updated.map(u => u.widgetId) }, ...result };
+    },
+  });
+  if (["already-done", "reconciled"].includes(outcome.state))
+    return { kind: "dashboard-copy-fix", profile, applied: false, state: outcome.state, url, message: "These widgets were already restored; nothing new was written." };
+  return { kind: "dashboard-copy-fix", profile, applied: true, state: outcome.complete ? "updated" : "unverified", verified: outcome.complete, url,
+    updated: outcome.updated, ...(outcome.failed.length ? { failed: outcome.failed } : {}), ...(outcome.notTried.length ? { notTried: outcome.notTried } : {}),
+    ...(outcome.unverified.length ? { unverified: outcome.unverified } : {}), ...(outcome.readBack ? { readBack: outcome.readBack } : {}),
+    ...(plan.skipped.length ? { skipped: preview.skipped } : {}) };
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -406,22 +667,25 @@ export async function main(args = process.argv.slice(2)) {
     interval: { type: "string" }, apply: { type: "boolean" }, "allow-repeat": { type: "boolean" },
     receipts: { type: "string" }, profile: { type: "string" }, "resolve-pending": { type: "string" },
     "dashboard-id": { type: "string" }, "target-company-id": { type: "string" }, "target-site-id": { type: "string" },
-    mapping: { type: "string" }, out: { type: "string" },
+    mapping: { type: "string" }, out: { type: "string" }, "copy-id": { type: "string" },
   } });
   const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
   originFor(profile);
-  if (["copy", "copy-mapping"].includes(args[0])) {
-    const scope = { call: await liveSession(profile, { allow: ROUTES, maxRequests: 80 }), profile, companyId: o["company-id"], siteId: o["site-id"],
+  if (["copy", "copy-mapping", "fix-copy"].includes(args[0])) {
+    // A copy re-saves up to one widget per request after the copy itself.
+    const scope = { call: await liveSession(profile, { allow: ROUTES, maxRequests: 200 }), profile, companyId: o["company-id"], siteId: o["site-id"],
       dashboardId: o["dashboard-id"], targetCompanyId: o["target-company-id"], targetSiteId: o["target-site-id"] };
     if (args[0] === "copy-mapping") {
       const proposal = await copyMapping(scope);
       if (o.out) { await writeFile(o.out, JSON.stringify(proposal, null, 2), { mode: 0o600 }); proposal.savedTo = o.out; }
       return proposal;
     }
-    return copyDashboard({ ...scope, name: o.name, mapping: o.mapping ? await readMapping(o.mapping) : undefined,
-      apply: !!o.apply, allowRepeat: !!o["allow-repeat"], resolve: o["resolve-pending"], receipts: receiptsFile(o.receipts) });
+    const writes = { mapping: o.mapping ? await readMapping(o.mapping) : undefined,
+      apply: !!o.apply, allowRepeat: !!o["allow-repeat"], resolve: o["resolve-pending"], receipts: receiptsFile(o.receipts) };
+    if (args[0] === "fix-copy") return fixCopy({ ...scope, ...writes, copyId: o["copy-id"] });
+    return copyDashboard({ ...scope, ...writes, name: o.name });
   }
-  if (args[0] !== "create") throw new Error("Choose create, copy-mapping or copy");
+  if (args[0] !== "create") throw new Error("Choose create, copy-mapping, copy or fix-copy");
   return createDashboard({
     call: await liveSession(profile, { allow: ROUTES, maxRequests: 40 }), profile,
     companyId: o["company-id"], siteId: o["site-id"], name: o.name, description: o.description,
@@ -434,6 +698,12 @@ const cliProfile = () => argValue("profile") ?? process.env.ZIRA_PROFILE ?? "pro
 
 // A blocked copy points to the source dashboard in Zira, whose site Dashboards tab has Duplicate.
 export function handoffInfo(argv = process.argv) {
+  const copy = argv[2] === "fix-copy" ? argValue("copy-id", argv) : undefined;
+  if (id(copy ?? "")) {
+    const profile = ["prod", "integ"].includes(cliProfile()) ? cliProfile() : "prod";
+    return { pageUrl: link(profile, `/dashboards/${copy}`),
+      details: "In Zira, open the copy and edit each listed widget: paste the source widget's description. Nothing was changed here." };
+  }
   const source = ["copy", "copy-mapping"].includes(argv[2]) ? argValue("dashboard-id", argv) : undefined;
   if (id(source ?? "")) {
     const profile = ["prod", "integ"].includes(cliProfile()) ? cliProfile() : "prod";

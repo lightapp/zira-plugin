@@ -244,6 +244,43 @@ export function payload(w, ctx, mapping = {}) {
   return { ...base, components: [{ type: component, placementIndex: 1, overrideDisplayRange: previous?.overrideDisplayRange ?? null, overrideDisplayInterval: previous?.overrideDisplayInterval ?? null, arguments: [argument] }] };
 }
 
+// Settings keys Zira's agent widget guard accepts per saved widget type (platform
+// assistantAccess/widgetScope.ts: analytic, readings, filter).
+const SAVED_KEYS = { '15': ANALYTIC, '17': [...COMMON, 'chartType', 'device', 'deviceId', 'columnsSelected', 'filters', 'isKeepEditMode'] };
+const HEADER_UI = ['fontSize', 'isCenterHeader', 'description'];
+
+// Re-save a widget as Zira returns it, changing only its description and its chart argument's
+// data source, in the one shape the agent widget guard accepts. Chart widgets keep the legacy
+// filters mirror of their settings and readings widgets the deviceId envelope, as Zira web and
+// payload() save them. Returns { body } or { skip: reason } and never guesses other fields.
+export function resaveBody(widget, { description = widget?.description ?? '', device } = {}) {
+  const type = String(widget?.type?.id ?? '');
+  const base = { name: widget.name, description: description ?? '', type: widget.type, overrideDisplayRange: widget.overrideDisplayRange ?? null,
+    overrideDisplayInterval: widget.overrideDisplayInterval ?? null, displayRangeOffset: widget.displayRangeOffset ?? null };
+  if (type === '6') {
+    const ui = widget.uiSettings ?? {};
+    if ((widget.components ?? []).length || !obj(ui) || Object.keys(ui).some(k => !HEADER_UI.includes(k))) return { skip: 'header with settings the plugin cannot save' };
+    return { body: { ...base, components: [], uiSettings: ui } };
+  }
+  if (type === '20') return { skip: 'filter widget: its widget list still points at the source dashboard; choose its widgets again in Zira' };
+  if (!SAVED_KEYS[type]) return { skip: `${widget.type?.name ?? 'this'} widget type is not re-saved by the plugin` };
+  const components = widget.components ?? [];
+  if (components.length !== 1 || (components[0].arguments ?? []).length !== 1) return { skip: 'widget with several chart parts' };
+  const c = components[0], a = c.arguments[0], s = a.nextGenWidgetSettings;
+  if (Number(c.placementIndex) !== 1 || Number(a.placementIndex) !== 1) return { skip: 'widget with several chart parts' };
+  if (a.cta || a.overrideChartConfig || Object.values(a.func ?? {}).some(v => v != null)) return { skip: 'widget with a call to action, chart override or channel function' };
+  if (!obj(s) || Object.keys(s).some(k => !SAVED_KEYS[type].includes(k))) return { skip: 'widget with settings the plugin cannot save' };
+  const filters = type === '17' ? { deviceId: s.device, columnsSelected: s.columnsSelected, isKeepEditMode: s.isKeepEditMode ?? false, filters: s.filters } : s;
+  const argument = { type: a.type, placementIndex: 1, overrideDisplayRange: a.overrideDisplayRange ?? null, overrideDisplayInterval: a.overrideDisplayInterval ?? null,
+    displayRangeOffset: a.displayRangeOffset ?? null, device: device == null ? null : { id: String(device) }, filters, nextGenWidgetSettings: s, func: null };
+  return { body: { ...base, components: [{ type: c.type, placementIndex: 1, overrideDisplayRange: c.overrideDisplayRange ?? null,
+    overrideDisplayInterval: c.overrideDisplayInterval ?? null, displayRangeOffset: c.displayRangeOffset ?? null, arguments: [argument] }] } };
+}
+export const argumentDevice = widget => {
+  const value = widget?.components?.[0]?.arguments?.[0]?.device?.id;
+  return value == null || value === '' ? null : String(value);
+};
+
 export function layoutFor(widgets, dashboard, mapping) {
   const result = structuredClone(dashboard.configurationLayout ?? {});
   for (const [bp, cols] of Object.entries({ lg:12, md:12, sm:6, xs:2 })) {

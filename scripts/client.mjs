@@ -12,6 +12,8 @@ import { id } from "../skills/health-report/scripts/config.mjs";
 import { readJson, writePrivate, withLock } from "../skills/health-report/scripts/storage.mjs";
 import { originFor } from "./browse.mjs";
 import { ZiraApiError } from "../skills/health-report/scripts/task-api.mjs";
+import { resolveAgentRoute } from "../skills/health-report/scripts/vendor/zira-agent-toolkit/api.js";
+import { runtimeAgentPacer } from "../skills/health-report/scripts/vendor/zira-agent-toolkit/pacing-ipc.js";
 
 export { id, originFor, ZiraApiError };
 
@@ -76,30 +78,49 @@ export function handoff(profile, { prompt, pageUrl, details } = {}) {
 
 // Live calls use the plugin's browser sign-in. Each helper passes an allowlist so a
 // skill cannot turn this into an arbitrary API proxy.
-export async function liveSession(profile, { allow, maxRequests = 30, auth, fetchImpl = globalThis.fetch } = {}) {
+export async function liveSession(profile, { allow, once = [], maxRequests = 30, auth, fetchImpl = globalThis.fetch, pacer, limits = {} } = {}) {
   originFor(profile);
   const { getAuthorizationToken } = auth ?? await toolkit();
   const origin = profile === "prod" ? "https://api.zira.us" : "https://integ.api.zira.us";
+  const routePacer = pacer ?? runtimeAgentPacer();
   const fetchLimited = boundedFetch({
+    ...limits,
     maxRequests,
-    fetchImpl: (url, options) => fetchImpl(url, { ...options, signal: AbortSignal.timeout(30000) }),
+    fetchImpl: (url, options) => {
+      routePacer.assertAvailable?.();
+      return fetchImpl(url, { ...options, signal: AbortSignal.timeout(30000) });
+    },
   });
   return async (method, target, body) => {
     const pathname = target.split("?")[0];
     if (!allow?.some(([m, pattern]) => m === method && pattern.test(pathname)))
       throw new Error(`Route not allowed for this action: ${method} ${pathname}`);
-    const url = new URL(target, origin);
-    if (url.origin !== origin || url.hash) throw new Error("Route not allowed for this action");
+    const { url, route: routeKey } = resolveAgentRoute(origin, target, { method, profileName: profile });
     // Refresh before sending. Only a read can be replayed after a 401; a write
     // has one attempt so local receipts can safely track an uncertain outcome.
-    const send = async forceRefresh => fetchLimited(url.href, {
-      method, redirect: "manual",
-      headers: { Authorization: await getAuthorizationToken({ profileName: profile, forceRefresh, fetchImpl: fetchLimited }),
-        Accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    const send = async forceRefresh => {
+      fetchLimited.assertAvailable();
+      try {
+        return await routePacer.run({ origin, route: routeKey }, async () => {
+          fetchLimited.assertAvailable();
+          const token = await getAuthorizationToken({ profileName: profile, forceRefresh, fetchImpl: fetchLimited });
+          fetchLimited.assertAvailable();
+          return fetchLimited(url.href, {
+            method, redirect: "manual",
+            headers: { Authorization: token, Accept: "application/json",
+              ...(body === undefined ? {} : { "content-type": "application/json" }) },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          });
+        }, { signal: fetchLimited.signal });
+      } catch (error) {
+        // Preserve the run's rate-limit explanation when its queue was cancelled.
+        if (error?.code === "AGENT_PACING_BLOCKED") fetchLimited.assertAvailable();
+        throw error;
+      }
+    };
     let response = await send(false);
-    if (response.status === 401 && method === "GET") {
+    // `once` lists GET routes that start work (Zira's train-model), which are never replayed either.
+    if (response.status === 401 && method === "GET" && !once.some(([m, pattern]) => m === method && pattern.test(pathname))) {
       await response.body?.cancel();
       response = await send(true);
     }
@@ -122,6 +143,10 @@ const SIGN_IN_ERROR = /not logged in|run `zira login`|Unable to refresh profile/
 export function explain(error, { profile = "prod", handoffInfo } = {}) {
   if (error instanceof Blocked) return error;
   const next = handoffInfo ? { handoff: handoff(profile, handoffInfo) } : {};
+  if (error?.code === "AGENT_ROUTE_UNAVAILABLE" && !(error instanceof ZiraApiError))
+    return new Blocked("agent_route_unavailable", error.message, next);
+  if (error?.code === "AGENT_PACING_BLOCKED" && !(error instanceof ZiraApiError))
+    return new Blocked("agent_pacing_blocked", error.message, next);
   if (error?.code === "HEALTH_REQUEST_LIMIT" && !(error instanceof ZiraApiError))
     return new Blocked("rate_limit", error.message, { ...next, retry: "Wait for the stated retry time; do not switch identities or scopes." });
   if (SIGN_IN_ERROR.test(error?.message ?? ""))
@@ -140,6 +165,7 @@ export function explain(error, { profile = "prod", handoffInfo } = {}) {
 // A 4xx, limit or sign-in denial was never executed; network, timeout and 5xx outcomes are unknown.
 export const definiteFailure = error =>
   error instanceof Blocked ||
+  (["AGENT_ROUTE_UNAVAILABLE", "AGENT_PACING_BLOCKED"].includes(error?.code) && !(error instanceof ZiraApiError)) ||
   SIGN_IN_ERROR.test(error?.message ?? "") ||
   (error?.code === "HEALTH_REQUEST_LIMIT" && !(error instanceof ZiraApiError)) ||
   (error instanceof ZiraApiError && error.status >= 400 && error.status < 500 && error.status !== 408);
@@ -238,7 +264,8 @@ const describeCreated = created => Object.entries(created).map(([k, v]) => `${k}
 // One receipt per intended write. `pending` means the outcome is unknown: reconcile it from
 // Zira, or let the user resolve it (`resolve: "none"` or the record's ID) after checking Zira.
 // `partial` means some records of a multi-step write exist. Repeats get their own slot so
-// the original receipt survives.
+// the original receipt survives. allowRepeat may be a function of a done receipt: that write is
+// repeated in a new slot only when it returns true (for example once a sent command is settled).
 export async function guardedWrite({
   file, key, summary, allowRepeat = false, reconcile, precheck, run, resolve, resolveField = "recordId", links = () => ({}), resume,
 }) {
@@ -248,7 +275,8 @@ export async function guardedWrite({
     if (store.version !== 1 || typeof store.actions !== "object") throw new Error("Unsupported receipts file");
     const save = () => writePrivate(file, store);
     let slot = key;
-    if (allowRepeat) for (let n = 2; store.actions[slot]?.state === "done"; n++) slot = `${key}#${n}`;
+    const repeat = entry => entry?.state === "done" && (typeof allowRepeat === "function" ? allowRepeat(structuredClone(entry)) : !!allowRepeat);
+    for (let n = 2; repeat(store.actions[slot]); n++) slot = `${key}#${n}`;
     let prior = store.actions[slot];
     if (resolve !== undefined) {
       if (!["pending", "partial"].includes(prior?.state)) throw new Error("There is no uncertain or partial attempt of this action to resolve");
@@ -309,6 +337,22 @@ export async function guardedWrite({
       await save();
       throw new Blocked("unverified_write", `Zira created ${describeCreated(entry.created)}, then a later step failed (${error.message}). Check it in Zira; do not rerun.`, { created: entry.created, ...links(entry.created) });
     }
+  });
+}
+
+// Adds what was learned after a write (such as a device's late answer) to its newest receipt,
+// in the key's own slot or a repeat slot, that `match` accepts. Returns that receipt, or null.
+export async function annotateReceipt(file, key, fields, match = () => true) {
+  return withActionLock(file, async () => {
+    const store = await readJson(file, { version: 1, actions: {} });
+    if (store.version !== 1 || typeof store.actions !== "object") throw new Error("Unsupported receipts file");
+    const repeatOf = k => k === key ? 1 : k.startsWith(`${key}#`) && /^\d+$/.test(k.slice(key.length + 1)) ? Number(k.slice(key.length + 1)) : 0;
+    const slots = Object.keys(store.actions).filter(repeatOf).sort((a, b) => repeatOf(b) - repeatOf(a));
+    const slot = slots.find(k => match(structuredClone(store.actions[k])));
+    if (!slot) return null;
+    Object.assign(store.actions[slot], fields);
+    await writePrivate(file, store);
+    return store.actions[slot];
   });
 }
 

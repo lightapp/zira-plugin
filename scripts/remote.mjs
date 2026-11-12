@@ -27,7 +27,8 @@ Common: --profile prod|integ   --web-origin http://localhost:PORT (local zira-we
 
 find, open and actions make Zira API reads only. devices, status and watch connect to the
 camera's live topics with the plugin's sign-in: they read, and watch also sends the same
-"someone is watching" heartbeat the web page sends so the camera streams live data.
+"someone is watching" heartbeat the web page sends so the camera streams live data (and,
+on a band saw Vision camera, its board-still inspections).
 command previews by default; --apply asks Zira to send the command once, records a local
 receipt and waits for the camera's status reply. The same action with the same values is
 not sent twice (already-done) unless --allow-repeat says the user wants it again. An acknowledged command is not proof the
@@ -70,6 +71,8 @@ export const STATUS_TOPICS = {
   trimsawCalibration: { suffix: "trimsaw-calibration-state", label: "Trim saw calibration", types: ["vision"] },
   trimsawCalibrationMetrics: { suffix: "trimsaw-calibration-metrics", label: "Trim saw live comparison", types: ["vision"] },
   deployment: { suffix: "deployment-status", label: "App version", types: ["vision"] },
+  // Vision-App band saw mode, only while a live-data watcher is present (retained 15 min).
+  bandsawInspection: { suffix: "bandsaw-inspection", label: "Band saw inspection", types: ["vision"], match: m => m?.kind === "bandsaw-inspection" },
 };
 
 export const deviceKind = ds => (ds.applyingId === "10" || ds.type === "Pallet Vision" ? "pallet" : "vision");
@@ -81,7 +84,7 @@ export function statusTopic(ds, identity, kind) {
 // ---- Remote actions ----
 // Mirrors platform src/prodVision/common/remoteCommands.ts: names, parameters and status
 // replies. `enabled` actions are offered; the others stay in Zira's Remote Control tab
-// (or update-vision-device for models) until each is reviewed and enabled on both sides.
+// (or the push-model skill for models) until each is reviewed and enabled on both sides.
 const int = (min, max, dflt, label) => ({ type: "integer", min, max, ...(dflt === undefined ? {} : { default: dflt }), label });
 const bool = (dflt, label) => ({ type: "boolean", default: dflt, label });
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -113,13 +116,14 @@ export const ACTIONS = {
     params: { ...recordingParams, schedules: { type: "schedules", label: "Days and start times (HH:MM, camera's local time); an empty list clears the schedule" } },
     effect: "Replaces the camera's recording schedule." },
   "recording.stop": { label: "Stop video recording", status: "recording", risk: "device", enabled: true, types: BOTH, params: {} },
-  "settings.apply": { label: "Change device settings", status: "settingsStatus", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl" },
+  "settings.apply": { label: "Change device settings", status: "settingsStatus", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl",
+    note: "Vision cameras: Zira admins plan, apply and verify settings with the configure-vision-camera skill (internal)." },
   ...Object.fromEntries(["get", "preview", "apply", "cancel"].map(c =>
     [`trimsaw.calibration.${c}`, { label: `Trim saw calibration: ${c}`, status: "trimsawCalibration", correlation: "requestId",
       risk: c === "apply" ? "guarded" : "read", enabled: buildInfo().audience === "internal", internalOnly: true,
       types: ["vision"], params: {},
       note: "Requires new Android calibration protocol and explicit server action enablement; preview never changes production." }])),
-  "model.sync": { label: "Push a model to the camera", status: "model", risk: "guarded", enabled: false, types: BOTH, skill: "update-vision-device" },
+  "model.sync": { label: "Push a model to the camera", status: "model", risk: "guarded", enabled: false, types: BOTH, skill: "push-model" },
   "model.delete": { label: "Remove a model from the camera", status: "model", risk: "guarded", enabled: false, types: ["pallet"], web: "remoteControl" },
   ...Object.fromEntries(["start", "stop", "continue", "assign", "remove", "apply", "cancel", "clear"].map(c =>
     [`trimsaw.${c}`, { label: `Trim saw stops: ${c}`, status: "trimsaw", risk: "guarded", enabled: false, types: ["vision"], web: "remoteControl" }])),
@@ -294,8 +298,35 @@ function connectionOf(u) {
     changes: Array.isArray(u.changes) ? u.changes.length : undefined });
 }
 
+// The band saw live inspection (Vision-App bandsaw-inspection v1): the camera's newest kept board
+// still, compact. stillKey is the uploaded picture's storage key; viewing it needs a signed-in Zira
+// page, so it is reported as a key and never turned into a link.
+const round2 = v => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : undefined);
+const whole = v => (Number.isInteger(v) && v >= 0 ? v : undefined);
+const obj = v => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
+function inspectedStill(s, unit) {
+  if (!obj(s)) return undefined;
+  const length = round2(s.palletLength), width = round2(s.palletWidth);
+  return defined({ takenAt: time(s.takenAt) ?? undefined, measured: typeof s.measured === "boolean" ? s.measured : undefined,
+    size: length === undefined && width === undefined ? undefined : `${length ?? "?"} × ${width ?? "?"}${unit ? ` ${unit}` : ""}`,
+    boards: whole(s.boardsFound), palletState: typeof s.palletState === "string" && s.palletState ? s.palletState.slice(0, 60) : undefined });
+}
+export function bandsawInspectionSummary(m) {
+  const s = obj(m?.still) ?? {};
+  const unit = typeof s.unit === "string" && s.unit.trim() ? s.unit.trim().slice(0, 12) : undefined;
+  const key = typeof s.stillKey === "string" && s.stillKey ? s.stillKey.slice(0, 300) : null;
+  return defined({ at: time(m?.publishedAt), trigger: typeof m?.trigger === "string" ? m.trigger.slice(0, 20) : undefined,
+    ...(m?.v === 1 ? {} : { version: prim(m?.v) ? m.v : null }),
+    still: typeof s.name === "string" ? s.name.slice(0, 120) : undefined, ...inspectedStill(s, unit),
+    estimatedBoards: whole(s.estimatedBoards), hiddenBoards: whole(s.hiddenBoards), palletStateProbability: round2(s.palletStateProbability),
+    straightenedDegrees: round2(s.straightenedDegrees), turnDegrees: round2(s.turnDegrees),
+    pictureUploaded: !!key, ...(key ? { stillKey: key, dataset: text(s.dataset) } : {}), summary: text(s.summary),
+    previous: m && "previous" in m ? inspectedStill(m.previous, unit) ?? null : undefined });
+}
+
 export function statusSummary(kind, m) {
   if (!m || typeof m !== "object") return null;
+  if (kind === "bandsawInspection") return bandsawInspectionSummary(m);
   const at = time(m.updatedAt ?? m.ts ?? m.timestamp ?? m._ts);
   if (kind === "presence") return { at, connected: m.connected !== false, ...pick(m, ["model", "deviceName", "hwId", "batteryLevel", "isCharging"]),
     ...defined({ storage: storageOf(m.storage), connection: connectionOf(m.networkDiagnostics?.usage) }) };
@@ -483,32 +514,54 @@ export async function statusSnapshot(client, ds, identity, { seconds = 5 } = {})
 }
 
 // Streams live data while sending the watcher heartbeat the camera needs to keep publishing.
-export async function watchLive(client, base, identity, { seconds = 60, onMessage, signal, heartbeatMs = HEARTBEAT_MS, names = {} } = {}) {
+// With inspection (Vision cameras), also the band saw inspection the same heartbeat makes the camera
+// publish: the retained latest still on subscribing, then each new still and its finished upload.
+export async function watchLive(client, base, identity, { seconds = 60, onMessage, onInspection, inspection = true, signal,
+  heartbeatMs = HEARTBEAT_MS, names = {} } = {}) {
   const topic = identityTopic(base, identity, "live-data");
+  const inspectionTopic = inspection ? identityTopic(base, identity, STATUS_TOPICS.bandsawInspection.suffix) : null;
   const watchers = identityTopic(base, identity, "live-data-watchers");
   const beat = () => client.publish(watchers, { online: true }, { qos: 1, messageExpiry: 60 });
   const timer = setInterval(() => beat().catch(() => {}), heartbeatMs);
   timer.unref?.();
-  const messages = [];
+  const messages = [], inspections = [];
+  const filters = inspectionTopic ? [topic, inspectionTopic] : [topic];
   try {
-    // Subscribe first, then announce the watcher, so the camera's immediate snapshot is caught.
-    await client.subscribe([topic]);
-    const pending = collect(client, [topic], seconds * 1000, { signal, subscribe: false, onMessage: m => {
+    // Listen, subscribe, then announce the watcher: retained copies can arrive in the same read as the
+    // subscription's acknowledgement, and the camera answers the watcher with an immediate snapshot.
+    const listening = new AbortController();
+    signal?.addEventListener("abort", () => listening.abort(), { once: true });
+    const pending = collect(client, filters, seconds * 1000, { signal: listening.signal, subscribe: false, onMessage: m => {
+      if (m.topic === inspectionTopic) {
+        if (!STATUS_TOPICS.bandsawInspection.match(m.json)) return;
+        const s = { retained: !!m.retain, ...bandsawInspectionSummary(m.json) };
+        s.at ??= new Date(m.receivedAt).toISOString();
+        inspections.push(s);
+        onInspection?.(s, m);
+        return;
+      }
       const s = liveSummary(m.json, names);
       if (!s) return;
       s.at ??= new Date(m.receivedAt).toISOString();
       messages.push(s);
       onMessage?.(s, m);
     } });
-    await beat();
+    try {
+      await client.subscribe(filters);
+      await beat();
+    } catch (error) {
+      listening.abort();
+      await pending.catch(() => {});
+      throw error;
+    }
     await pending;
   } finally {
     clearInterval(timer);
   }
-  return summarizeLive(messages, seconds);
+  return summarizeLive(messages, seconds, inspectionTopic ? inspections : undefined);
 }
 
-export function summarizeLive(messages, seconds) {
+export function summarizeLive(messages, seconds, inspections) {
   const fresh = messages.filter(m => m.at).sort((a, b) => a.at.localeCompare(b.at));
   const first = fresh[0], last = fresh.at(-1);
   const delta = k => first && last && Number.isFinite(first[k]) && Number.isFinite(last[k]) ? last[k] - first[k] : null;
@@ -516,7 +569,11 @@ export function summarizeLive(messages, seconds) {
   for (const m of fresh) if (m.status !== statuses.at(-1)?.status) statuses.push({ at: m.at, status: m.status });
   return { seconds, messages: messages.length, ...(first ? { firstAt: first.at, lastAt: last.at } : {}),
     unitsChange: delta("units"), shiftCountChange: delta("shiftCount"), statusChanges: statuses.slice(0, 20), latest: last ?? null,
-    ...(messages.length ? {} : { note: "No live data arrived. The camera may be offline, still starting, or not streaming live data for this data source." }) };
+    ...(messages.length ? {} : { note: "No live data arrived. The camera may be offline, still starting, or not streaming live data for this data source." }),
+    ...(inspections?.length ? { bandsawInspection: {
+      messages: inspections.length, stills: new Set(inspections.map(i => i.still).filter(Boolean)).size,
+      triggers: inspections.reduce((n, i) => ({ ...n, [i.trigger ?? "unknown"]: (n[i.trigger ?? "unknown"] ?? 0) + 1 }), {}),
+      latest: inspections.at(-1) } } : {}) };
 }
 
 // ---- Commands ----
@@ -662,7 +719,8 @@ export async function main(args = process.argv.slice(2)) {
         const identity = chooseIdentity(o.identity ? [] : await discover(client, deviceBase(ds)), o.identity);
         emit({ type: "start", dataSource: { id: ds.id, name: ds.name, site: ds.site.name }, camera: identity, ...liveLinks(profile, ds, { identity, origin: scope.origin, livePage: scope.livePage }) });
         const summary = await watchLive(client, deviceBase(ds), identity, { seconds: seconds(60, 3600), signal: controller.signal,
-          names: ds.metricNames, onMessage: s => emit({ type: "live", ...s }) });
+          names: ds.metricNames, onMessage: s => emit({ type: "live", ...s }),
+          inspection: deviceKind(ds) === "vision", onInspection: s => emit({ type: "inspection", ...s }) });
         return { kind: "live-watch", profile, dataSource: ds, camera: identity, summary, ...liveLinks(profile, ds, { identity, origin: scope.origin, livePage: scope.livePage }) };
       });
       if (o.jsonl) { emit({ type: "end", summary: result.summary }); return undefined; }

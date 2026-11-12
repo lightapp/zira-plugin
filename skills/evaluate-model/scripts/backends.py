@@ -144,11 +144,19 @@ def decode_output(raw: np.ndarray, detail: dict, class_count: int, confidence: f
     return nms(clipped, nms_iou), layout
 
 
+# LiteRT's built-in CPU kernels, not the XNNPACK delegate it applies by default. XNNPACK picks kernels by CPU model
+# (and on AWS Lambda, where it cannot read the CPU list, it is skipped), so the same model and stills scored a few
+# boxes differently on an Apple M5 than on Graviton. The built-in kernels gave bit-identical reports on both
+# (2026-11-10, lightapp/agent-tools#64), so a local run and a Zira cloud evaluation agree; they are slower.
+KERNELS = "builtin"
+
+
 class LiteRtModel:
     def __init__(self, path: Path, threads: int, interpreter=None):
         if interpreter is None:
-            from ai_edge_litert.interpreter import Interpreter
-            interpreter = Interpreter(model_path=str(path), num_threads=max(1, min(os.cpu_count() or 4, threads)))
+            from ai_edge_litert.interpreter import Interpreter, OpResolverType
+            interpreter = Interpreter(model_path=str(path), num_threads=max(1, min(os.cpu_count() or 4, threads)),
+                                      experimental_op_resolver_type=OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES)
         interpreter.allocate_tensors()
         self.interpreter = interpreter
         self.input = interpreter.get_input_details()[0]
@@ -160,7 +168,7 @@ class LiteRtModel:
         self.class_count = output_class_count(out_shape)
         self.info = {"type": "LiteRT", "inputShape": [int(x) for x in self.input["shape"]],
                      "inputDtype": np.dtype(self.input["dtype"]).name, "inputLayout": "NCHW" if nchw else "NHWC",
-                     "outputShape": out_shape, "outputDtype": np.dtype(self.output["dtype"]).name}
+                     "outputShape": out_shape, "outputDtype": np.dtype(self.output["dtype"]).name, "kernels": KERNELS}
         self.preprocessing = {"resize": "stretch", "interpolation": "bilinear", "size": [width, height],
                               "color": "RGB", "scale": "0..1", "quantized": bool(np.issubdtype(self.input["dtype"], np.integer)),
                               "nms": "this tool, per class"}

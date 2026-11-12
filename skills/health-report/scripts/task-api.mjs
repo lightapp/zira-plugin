@@ -1,6 +1,8 @@
 import { toolkit } from "./api.mjs";
 import { boundedFetch } from "./limits.mjs";
 import { id, timestamp } from "./config.mjs";
+import { resolveAgentRoute } from "./vendor/zira-agent-toolkit/api.js";
+import { runtimeAgentPacer } from "./vendor/zira-agent-toolkit/pacing-ipc.js";
 
 const ORIGINS = { prod: "https://api.zira.us", integ: "https://integ.api.zira.us" };
 const PRIORITIES = { "5": "Low", "10": "Medium", "15": "High" };
@@ -25,27 +27,42 @@ export class ZiraApiError extends Error {
 
 // Refresh before sending a write; never replay a write, including after HTTP 401.
 export async function internalTaskClient(profile = process.env.ZIRA_PROFILE ?? "prod", {
-  auth, fetchImpl = globalThis.fetch, maxRequests = 100,
+  auth, fetchImpl = globalThis.fetch, maxRequests = 100, pacer, limits = {},
 } = {}) {
   const origin = ORIGINS[profile];
   if (!origin) throw new Error("Choose prod or integ profile");
   const { getAuthorizationToken } = auth ?? await toolkit();
-  const limited = boundedFetch({ maxRequests, fetchImpl: (url, options) =>
-    fetchImpl(url, { ...options, signal: AbortSignal.timeout(30000) }) });
+  const routePacer = pacer ?? runtimeAgentPacer();
+  const limited = boundedFetch({ ...limits, maxRequests, fetchImpl: (url, options) => {
+    routePacer.assertAvailable?.();
+    return fetchImpl(url, { ...options, signal: AbortSignal.timeout(30000) });
+  } });
   return async (method, target, body) => {
     const pathname = target.split("?")[0];
     if (!ROUTES.some(([m, pattern]) => method === m && pattern.test(pathname)))
       throw new Error("Internal task route not allowed");
-    const url = new URL(target, origin);
-    if (url.origin !== origin || url.hash) throw new Error("Internal task route not allowed");
+    const { url, route } = resolveAgentRoute(origin, target, { method, profileName: profile });
     if (body !== undefined && POST_LINKED_FIELDS.some(key => Object.hasOwn(Object(body), key)))
       throw new Error("Task writes must not carry feed-post fields");
-    const send = async forceRefresh => limited(url.href, {
-      method, redirect: "manual",
-      headers: { Authorization: await getAuthorizationToken({ profileName: profile, forceRefresh, fetchImpl: limited }),
-        Accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    const send = async forceRefresh => {
+      limited.assertAvailable();
+      try {
+        return await routePacer.run({ origin, route }, async () => {
+          limited.assertAvailable();
+          const token = await getAuthorizationToken({ profileName: profile, forceRefresh, fetchImpl: limited });
+          limited.assertAvailable();
+          return limited(url.href, {
+            method, redirect: "manual",
+            headers: { Authorization: token, Accept: "application/json",
+              ...(body === undefined ? {} : { "content-type": "application/json" }) },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          });
+        }, { signal: limited.signal });
+      } catch (error) {
+        if (error?.code === "AGENT_PACING_BLOCKED") limited.assertAvailable();
+        throw error;
+      }
+    };
     let response = await send(false);
     if (response.status === 401 && method === "GET") {
       await response.body?.cancel();

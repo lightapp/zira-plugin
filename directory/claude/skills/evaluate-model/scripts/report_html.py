@@ -121,6 +121,10 @@ def render(report: dict, dataset_root: Path) -> str:
     # The version as the user knows it (the ZIP name), not the unpacked cache folder.
     source = Path(str(report.get("request", {}).get("dataset") or report["dataset"]["path"]))
     version = source.stem if source.suffix.lower() == ".zip" else source.name
+    # A run elsewhere (Zira's cloud evaluation jobs) says so, and names the version it read.
+    runner = report.get("runner") if isinstance(report.get("runner"), dict) else {}
+    cloud = runner.get("kind") == "zira-cloud"
+    version = str(runner.get("datasetVersion") or version)
     title = f"{model.get('name', 'Model')} on {version}"
     return TEMPLATE.format(
         csp=CSP,
@@ -136,6 +140,9 @@ def render(report: dict, dataset_root: Path) -> str:
         conf=settings.get("confidence", 0.25), match=settings.get("matchIou", 0.5),
         resize=html.escape(str(pre.get("resize", "?"))), size=html.escape("×".join(map(str, pre.get("size", []))) or "?"),
         ms=_fmt(report.get("timing", {}).get("model", {}).get("meanMs")),
+        ran=html.escape(f"run in Zira's cloud (job {runner.get('jobId', '?')}), nothing in Zira was changed") if cloud
+        else "run on this computer, nothing was uploaded",
+        on="on a Zira cloud worker" if cloud else "on this computer",
         cards="".join(cards), payload=payload)
 
 
@@ -218,7 +225,7 @@ dialog .frame img{{width:min(92vw,1000px)}}dialog .b span{{font-size:12px}}dialo
 footer{{color:var(--muted);font-size:12px;margin-top:24px}}.sec{{font-size:15px;margin:18px 0 4px}}
 </style></head><body><main>
 <h1>{model}</h1>
-<p class="sub">Dataset version <b>{dataset}</b> · {split} split · {images} images · run on this computer, nothing was uploaded</p>
+<p class="sub">Dataset version <b>{dataset}</b> · {split} split · {images} images · {ran}</p>
 {partial}{warning}{reference}
 <div class="kpis"><div class="kpi"><b id="kp">{precision}</b><span>precision</span></div><div class="kpi"><b id="kr">{recall}</b><span>recall</span></div>
 <div class="kpi"><b id="kf">{f1}</b><span>F1</span></div><div class="kpi"><b id="kc">{tp} / {fp} / {fn}</b><span>correct / extra / missed</span></div></div>
@@ -243,7 +250,7 @@ The run kept predictions from {conf}, so that is the lowest confidence; the addr
 <label><input type="checkbox" id="showp" checked> Predictions</label><span id="shown" class="note"></span></div>
 <section class="grid" id="grid">{cards}</section>{hidden}
 <dialog id="zoom"></dialog>
-<footer>Matching: same class, IoU ≥ that class's match IoU (run default {match}). Preprocessing: {resize} to {size}. Mean model time {ms} ms on this computer (not device latency).</footer>
+<footer>Matching: same class, IoU ≥ that class's match IoU (run default {match}). Preprocessing: {resize} to {size}. Mean model time {ms} ms {on} (not device latency).</footer>
 </main>
 <script id="data" type="application/json">{payload}</script>
 <script>

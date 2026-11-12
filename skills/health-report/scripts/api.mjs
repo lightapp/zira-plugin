@@ -2,6 +2,7 @@ import { statusValues } from "./status.mjs";
 import { boundedFetch } from "./limits.mjs";
 import { inflateSync } from "node:zlib";
 import { assertConfig, id, statusOnly, timestamp } from "./config.mjs";
+import { runtimeAgentPacer } from "./vendor/zira-agent-toolkit/pacing-ipc.js";
 export async function toolkit(module = "api.js") {
   if (!["api.js", "cli.js"].includes(module))
     throw new Error("Unknown authentication module");
@@ -11,17 +12,29 @@ export async function toolkit(module = "api.js") {
 }
 export async function liveClient(
   profileName = process.env.ZIRA_PROFILE ?? "prod",
+  { fetchImpl = globalThis.fetch, credentialsFile, pacer, limits = {} } = {},
 ) {
   const { ziraRequest } = await toolkit();
+  const routePacer = pacer ?? runtimeAgentPacer();
   const fetchLimited = boundedFetch({
-    fetchImpl: (url, options) =>
-      fetch(url, { ...options, signal: AbortSignal.timeout(30000) }),
+    ...limits,
+    fetchImpl: (url, options) => {
+      routePacer.assertAvailable?.();
+      return fetchImpl(url, { ...options, signal: AbortSignal.timeout(30000) });
+    },
   });
   return async (route) => {
-    const response = await ziraRequest(route, {
-      profileName,
-      fetchImpl: fetchLimited,
-    });
+    fetchLimited.assertAvailable();
+    let response;
+    try {
+      response = await ziraRequest(route, {
+        profileName, credentialsFile, pacer: routePacer, signal: fetchLimited.signal,
+        fetchImpl: fetchLimited,
+      });
+    } catch (error) {
+      if (error?.code === "AGENT_PACING_BLOCKED") fetchLimited.assertAvailable();
+      throw error;
+    }
     if (!response.ok)
       throw new Error(`Zira read failed (HTTP ${response.status})`);
     const text = await response.text();

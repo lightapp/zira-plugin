@@ -13,10 +13,13 @@ import hashlib
 import json
 import math
 import os
+import queue
 import signal
 import sys
 import time
 import zipfile
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,6 +29,7 @@ REPORT_VERSION = 1
 SPLITS = ("train", "val", "test")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 EXIT_OK, EXIT_INVALID, EXIT_PARTIAL = 0, 2, 3
+MAX_WORKERS = 16
 
 
 class EvalError(Exception):
@@ -86,7 +90,7 @@ def extract_zip(archive: Path, work_dir: Path) -> Path:
     digest = file_sha256(archive)[:16]
     target = (work_dir / f"{archive.stem}-{digest}").resolve()
     if (target / ".complete").is_file():
-        return target
+        return dataset_root(target)
     staging = target.with_name(target.name + ".partial")
     if staging.exists():
         import shutil
@@ -98,16 +102,20 @@ def extract_zip(archive: Path, work_dir: Path) -> Path:
             if not destination.is_relative_to(staging.resolve()):
                 raise EvalError(f"unsafe path in dataset archive: {member.filename}")
         bundle.extractall(staging)
-    # A ZIP with a single top folder holds the dataset inside it.
-    entries = [p for p in staging.iterdir() if not p.name.startswith(("__MACOSX", "."))]
     (staging / ".complete").write_text(archive.name)
     if target.exists():
         import shutil
         shutil.rmtree(target)
     os.replace(staging, target)
-    if len(entries) == 1 and entries[0].is_dir() and not (target / "data.yaml").exists():
-        return target / entries[0].name
-    return target
+    return dataset_root(target)
+
+
+def dataset_root(folder: Path) -> Path:
+    """A ZIP with a single top folder holds the dataset inside it."""
+    entries = [p for p in folder.iterdir() if not p.name.startswith(("__MACOSX", "."))]
+    if len(entries) == 1 and entries[0].is_dir() and not (folder / "data.yaml").exists():
+        return entries[0]
+    return folder
 
 
 def load_dataset(root: Path, split: str, limit: int | None = None, work_dir: Path | None = None) -> Dataset:
@@ -296,7 +304,7 @@ def build_request(args: argparse.Namespace) -> dict:
         request = {"version": REQUEST_VERSION}
     for key, value in (("dataset", args.dataset), ("model", args.model), ("split", args.split),
                        ("confidence", args.confidence), ("nmsIou", args.nms_iou), ("matchIou", args.match_iou),
-                       ("threads", args.threads), ("limit", args.limit), ("device", args.device), ("workDir", args.work_dir),
+                       ("threads", args.threads), ("workers", args.workers), ("limit", args.limit), ("device", args.device), ("workDir", args.work_dir),
                        ("allowClassMismatch", args.allow_class_mismatch or None),
                        ("modelClassNames", [n.strip() for n in args.model_classes.split(",")] if args.model_classes else None)):
         if value is not None:
@@ -306,6 +314,7 @@ def build_request(args: argparse.Namespace) -> dict:
     request.setdefault("nmsIou", 0.45)
     request.setdefault("matchIou", 0.5)
     request.setdefault("threads", 4)
+    request.setdefault("workers", default_workers())
     request.setdefault("device", "cpu")
     for key in ("dataset", "model"):
         if not request.get(key):
@@ -317,7 +326,53 @@ def build_request(args: argparse.Namespace) -> dict:
             raise EvalError(f"{key} must be between 0 and 1")
     if request.get("limit") is not None and int(request["limit"]) < 1:
         raise EvalError("limit must be at least 1")
+    if not 1 <= int(request["workers"]) <= MAX_WORKERS:
+        raise EvalError(f"workers must be 1 to {MAX_WORKERS}")
     return request
+
+
+def default_workers() -> int:
+    """Half the CPUs, at most six: each worker is one interpreter (about 170 MB at 1024 input)."""
+    return max(1, min(6, (os.cpu_count() or 2) // 2))
+
+
+def predict_stream(models: list, items: list, confidence: float, nms_iou: float, cancelled):
+    """(item, prediction) in dataset order. With several models (one interpreter per thread, LiteRT releases
+    Python's lock while a model runs) stills are scored in parallel; each still is scored on its own by one
+    interpreter, so the results are those of a one-worker run. Stops before the next still once cancelled."""
+    if len(models) == 1:
+        for item in items:
+            if cancelled():
+                return
+            yield item, models[0].predict(item.image, confidence=confidence, nms_iou=nms_iou)
+        return
+    free: queue.Queue = queue.Queue()
+    for model in models:
+        free.put(model)
+
+    def run(item):
+        model = free.get()
+        try:
+            return model.predict(item.image, confidence=confidence, nms_iou=nms_iou)
+        finally:
+            free.put(model)
+
+    pool = ThreadPoolExecutor(max_workers=len(models), thread_name_prefix="predict")
+    pending: deque = deque()
+    upcoming = iter(items)
+    try:
+        while True:
+            while len(pending) < 2 * len(models):  # a bounded look-ahead keeps memory flat on large splits
+                item = next(upcoming, None)
+                if item is None:
+                    break
+                pending.append((item, pool.submit(run, item)))
+            if not pending or cancelled():
+                return
+            item, future = pending.popleft()
+            yield item, future.result()
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 class Progress:
@@ -344,7 +399,13 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
         import backends
         load_model = backends.load_model
     load_started = time.perf_counter()
-    model = load_model(model_path, threads=int(request["threads"]), device=request["device"])
+    # Parallel workers for LiteRT models; an Ultralytics checkpoint runs its own threads.
+    workers = int(request.get("workers") or 1) if model_path.suffix.lower() == ".tflite" else 1
+    if workers > 1:
+        models = [load_model(model_path, threads=1, device=request["device"]) for _ in range(workers)]
+    else:
+        models = [load_model(model_path, threads=int(request["threads"]), device=request["device"])]
+    model = models[0]
     load_seconds = time.perf_counter() - load_started
     mapping = check_class_mapping(dataset.class_names, model, bool(request.get("allowClassMismatch")), request.get("modelClassNames"))
 
@@ -356,10 +417,8 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
     pre_ms, model_ms, post_ms, images, label_problems = [], [], [], [], []
     total = len(dataset.items)
     progress("start", total=total, model=model_path.name, split=request["split"])
-    for index, item in enumerate(dataset.items, 1):
-        if cancelled():
-            progress("cancelled", done=index - 1, total=total)
-            break
+    stream = predict_stream(models, dataset.items, float(request["confidence"]), float(request["nmsIou"]), cancelled)
+    for index, (item, out) in enumerate(stream, 1):
         truth, problems = read_labels(item.label, count)
         if problems:
             label_problems.append({"image": item.name, "problems": problems[:20]})
@@ -368,7 +427,6 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
             for box, score in zip(truth, scores):
                 if isinstance(score, (int, float)):
                     box["deviceScore"] = float(score)
-        out = model.predict(item.image, confidence=float(request["confidence"]), nms_iou=float(request["nmsIou"]))
         predictions = [p for p in out.boxes if 0 <= p["classId"] < count]
         pre_ms.append(out.preprocess_ms)
         model_ms.append(out.model_ms)
@@ -403,6 +461,8 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
                        **({"confused": confused} if confused else {}),
                        "timingMs": {"preprocess": out.preprocess_ms, "model": out.model_ms, "postprocess": out.postprocess_ms}})
         progress("image", done=index, total=total, image=item.name)
+    if len(images) < total:
+        progress("cancelled", done=len(images), total=total)
     complete = len(images) == total
 
     comparable_totals = lambda table: [sum(row[i] for c, row in enumerate(table) if mapping["comparable"][c]) for i in range(3)]
@@ -423,7 +483,7 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
                   "sizeBytes": model_path.stat().st_size, **model.info},
         "classMapping": mapping,
         "preprocessing": model.preprocessing,
-        "settings": {k: request[k] for k in ("confidence", "nmsIou", "matchIou", "threads", "device")},
+        "settings": {**{k: request[k] for k in ("confidence", "nmsIou", "matchIou", "threads", "device")}, "workers": workers},
         "summary": {"images": len(images), **rates(*totals)},
         "classes": [{"classId": i, "name": n, **rates(*stats[i]),
                      **({} if mapping["comparable"][i] else {"comparable": False, "modelClass": model_class(i)})}
@@ -431,6 +491,7 @@ def evaluate(request: dict, *, load_model=None, progress=None, cancelled=lambda:
         "timing": {
             "note": "Measured on this computer; not device latency. Model time excludes image loading and decoding.",
             "loadModelSeconds": load_seconds,
+            "workers": workers,
             "preprocess": timing(pre_ms), "model": timing(model_ms), "postprocess": timing(post_ms),
             "elapsedSeconds": time.perf_counter() - started,
         },
@@ -525,7 +586,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--confidence", type=float, help="minimum prediction score (default 0.25)")
     p.add_argument("--nms-iou", type=float, help="NMS IoU threshold for raw TFLite outputs (default 0.45)")
     p.add_argument("--match-iou", type=float, help="IoU needed to count a prediction as a match (default 0.5)")
-    p.add_argument("--threads", type=int, help="TFLite interpreter threads (default 4)")
+    p.add_argument("--threads", type=int, help="TFLite interpreter threads with one worker (default 4)")
+    p.add_argument("--workers", type=int, help=f"stills scored in parallel, one interpreter each (default half the CPUs, at most 6; up to {MAX_WORKERS})")
     p.add_argument("--device", help="Ultralytics device, e.g. cpu or mps (default cpu)")
     p.add_argument("--limit", type=int, help="evaluate only the first N images (for a quick check)")
     p.add_argument("--allow-class-mismatch", action="store_true", help="run even when classes differ; overall results count only matching classes")

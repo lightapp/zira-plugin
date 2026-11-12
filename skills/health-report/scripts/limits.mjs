@@ -14,19 +14,25 @@ export function boundedFetch({
     nextStart = 0,
     blocked = null;
   const queue = [];
+  const stopped = new AbortController();
   let limitReason;
   const fail = (message) =>
     Object.assign(new Error(message), { code: "HEALTH_REQUEST_LIMIT", limitReason });
+  const assertAvailable = () => { if (blocked) throw fail(blocked); };
   const request = async (url, options) => {
-    while (active >= maxConcurrent)
+    while (active >= maxConcurrent) {
+      assertAvailable();
       await new Promise((resolve) => queue.push(resolve));
+    }
     active++;
     try {
       if (blocked) throw fail(blocked);
-      if (used >= maxRequests)
-        throw fail(
-          "Local request budget exhausted; report coverage is incomplete",
-        );
+      if (used >= maxRequests) {
+        blocked = "Local request budget exhausted; report coverage is incomplete";
+        stopped.abort();
+        for (const resolve of queue.splice(0)) resolve();
+        throw fail(blocked);
+      }
       used++;
       const delay = Math.max(0, nextStart - now());
       nextStart = Math.max(now(), nextStart) + minIntervalMs;
@@ -34,12 +40,6 @@ export function boundedFetch({
       if (blocked) throw fail(blocked);
       const response = await fetchImpl(url, options);
       if (response.status === 429) {
-        blocked = "Server rate limit reached; stopped this run without retrying";
-        try {
-          const payload = await response.json();
-          if (["user_limit", "site_limit"].includes(payload?.error?.code))
-            limitReason = payload.error.code;
-        } catch { /* Older gateways may return a non-JSON throttle response. */ }
         const retry = response.headers?.get("retry-after");
         const seconds =
           retry && /^\d+$/.test(retry)
@@ -47,6 +47,16 @@ export function boundedFetch({
             : retry
               ? Math.max(0, Math.ceil((Date.parse(retry) - now()) / 1000))
               : null;
+        blocked = `Server rate limit reached${Number.isFinite(seconds) ? `; retry after ${seconds} seconds` : ""}; stopped this run without retrying; report coverage is incomplete`;
+        // Stop route queues before consuming the response body. Already-sent calls
+        // may finish; no pending callback is allowed to start another API attempt.
+        stopped.abort();
+        for (const resolve of queue.splice(0)) resolve();
+        try {
+          const payload = await response.json();
+          if (["user_limit", "site_limit"].includes(payload?.error?.code))
+            limitReason = payload.error.code;
+        } catch { /* Older gateways may return a non-JSON throttle response. */ }
         const reason = limitReason === "user_limit"
           ? "Your shared user allowance is exhausted across companies and sites"
           : limitReason === "site_limit"
@@ -62,5 +72,7 @@ export function boundedFetch({
     }
   };
   request.usage = () => ({ requests: used, maxRequests, blocked });
+  request.assertAvailable = assertAvailable;
+  request.signal = stopped.signal;
   return request;
 }

@@ -43,8 +43,13 @@ The standalone legacy health-report skill archive is a CLI-only artifact, not th
 | `evaluate.mjs` | `evaluate_model` |
 | `sessions.mjs` | `snapshot_sessions` |
 | `subset.mjs` | `subset_dataset` |
+| `training.mjs` (internal builds) | `training` |
+| `review.mjs` (review-labels, internal builds) | `review_labels` |
+| `build.mjs` (build-dataset, internal builds) | `build_dataset` |
+| `compare.mjs` (compare-models, internal builds) | `compare_models` |
 | `defects.mjs` | `find_defects` |
 | Inspect Nail Images `runtime.mjs` and packaged Python analyses | `nail_images` |
+| `vision-config.mjs` (configure-vision-camera, internal builds) | `vision_config` |
 
 Call a tool with `command: "help"` for its options. For preference updates, pass the JSON patch
 as the tool's `input` object, not a shell heredoc. For `health_report` discovery, use
@@ -71,6 +76,12 @@ entrypoints; they are not added to the public MCP surface.
 Jobs keep bounded output in memory, expire after 30 minutes and stop on server shutdown. Save large
 reports to their documented output files. Inspect saved results if output was truncated. Local
 report/review servers explicitly started by helpers retain their existing idle/stop lifecycle.
+
+The four running jobs share per-route API pacing, including nested health reports.
+Queue time counts toward the 30-minute deadline. Poll the returned job ID while work
+waits; do not start it again. A 429 stops that run without retrying writes, and an
+interrupted write/upload still needs receipt reconciliation. Separate MCP servers
+and computers do not share these local counters; server limits remain authoritative.
 
 Device Status also supports `command: "movement"` with company/site scope and `--days 7`
 (or offset-qualified `--from`/`--to`), and `command: "acknowledge"` with the reviewed report path,

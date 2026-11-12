@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { buildInfo } from './build-info.mjs';
 import { catalog, invocation } from './mcp-catalog.mjs';
+import { attachPacingCoordinator, IPC_ENV, IPC_MARKER, runtimeAgentPacer } from '../skills/health-report/scripts/vendor/zira-agent-toolkit/pacing-ipc.js';
 
 const MAX_OUTPUT = 512 * 1024;
 const MAX_JOBS = 64;
@@ -22,9 +23,9 @@ export function redact(text) {
 }
 
 export class Jobs {
-  constructor({ info = buildInfo(), spawnImpl = spawn, waitMs = 750, maxAge = MAX_AGE } = {}) {
+  constructor({ info = buildInfo(), spawnImpl = spawn, waitMs = 750, maxAge = MAX_AGE, pacer = runtimeAgentPacer() } = {}) {
     this.info = info; this.entries = catalog(info); this.spawn = spawnImpl;
-    this.waitMs = waitMs; this.maxAge = maxAge; this.jobs = new Map(); this.closed = false;
+    this.waitMs = waitMs; this.maxAge = maxAge; this.jobs = new Map(); this.closed = false; this.pacer = pacer;
   }
   tools() { return [...this.entries.map(e => e.tool), ...jobTools]; }
   snapshot(job) {
@@ -49,6 +50,7 @@ export class Jobs {
     if (this.jobs.size >= MAX_JOBS) throw new Error('This session has reached its job limit. Read existing results and restart the server before starting more work.');
     const env = { ...process.env };
     delete env.NODE_OPTIONS; delete env.NODE_PATH; delete env.PYTHONPATH; delete env.PYTHONSTARTUP;
+    env[IPC_ENV] = IPC_MARKER;
     const job = { id: randomUUID(), tool: name, status: 'running', out: '', err: '', size: 0, truncated: false };
     this.jobs.set(job.id, job);
     let finish;
@@ -56,12 +58,14 @@ export class Jobs {
     const complete = (code, reason) => {
       if (job.status !== 'running') return;
       clearTimeout(job.timer); job.code = code; job.status = code === 0 ? 'completed' : 'failed';
-      job.reason = reason ?? job.reason; job.finished = Date.now(); finish();
+      job.pacing?.close();
+      job.reason ??= reason; job.finished = Date.now(); finish();
     };
     try {
       job.child = this.spawn(process.execPath, [path.join(this.info.pluginRoot, entry.script), ...args], {
-        cwd: this.info.pluginRoot, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: this.info.pluginRoot, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       });
+      job.pacing = attachPacingCoordinator(job.child, this.pacer);
       const append = (key, chunk) => {
         const room = Math.max(0, MAX_OUTPUT - job.size);
         const bytes = Buffer.from(chunk); job[key] += bytes.subarray(0, room).toString('utf8'); job.size += Math.min(room, bytes.length);
@@ -86,6 +90,9 @@ export class Jobs {
     if (job.status !== 'running' || job.stopping) return;
     job.stopping = true;
     job.reason = reason;
+    // Stop queued grants before signalling the process tree. Active attempts retain
+    // their slot until actual process exit/disconnect, including the kill grace period.
+    job.pacing?.cancelQueued();
     const kill = signal => {
       const pid = job.child?.pid;
       if (!pid) { job.child?.kill(signal); return; }

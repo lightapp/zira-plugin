@@ -57,7 +57,7 @@ side. calibrate-trimsaw-from-video's `replay-stats` scores video replays with th
 
 | Number | Meaning |
 | --- | --- |
-| `vsSize.within["0.25"]`, `["0.5"]` | Share of cut boards at a stop whose raw Average Postcut is within ±0.25 or ±0.5 of the stop's size (inclusive) |
+| `vsSize.within["0.25"]`, `["0.5"]`, `["0.6"]` | Share of cut boards at a stop whose raw Average Postcut is within ±0.25, ±0.5 or ±0.6 of the stop's size (inclusive). ±0.6 counts as at size |
 | `vsCalibration` | The same against each stop's calibration value where one is given with `--calibration 42=41.7`, the size elsewhere; absent without calibration values |
 | `medianOffset`, `p10`, `p90`, `width` | Measured postcut minus the size: median, 10th and 90th percentiles, and p90 minus p10 |
 | `stops[]` | The same for each stop (relabels merged), busiest first; `cutBoards` says how much it rests on |

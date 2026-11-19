@@ -19,6 +19,8 @@ const heavyRoutes = new Set([
 ]);
 const creationRoutes = new Set([
   'POST /devices/from-template', 'POST /devices/copy', 'POST /dashboards/copy',
+  // A data source and a template made from it: new records, as costly as a copy.
+  'POST /forms/new', 'POST /devices/template',
   'POST /schedules/new', 'POST /files/signed-uploads/create',
   'GET /meters-data/prepare-readings-files',
   // A merge builds a dataset version; a training start launches a paid GPU job.

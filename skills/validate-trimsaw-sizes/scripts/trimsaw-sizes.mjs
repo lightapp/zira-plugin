@@ -16,7 +16,7 @@ import { ROUTES, serveDetached, writeReport } from "../../readings-report/script
 import { LIMITS, fetchDataset, home, loadDataset, readDataset } from "../../readings-report/scripts/store.mjs";
 import { neighboringStops, deriveNeighborColumns, neighborSections } from "./neighbor-stops.mjs";
 import {
-  DISTANCE_BANDS, TOLERANCES, compareFits, distanceBand, formatComparison, nearestStop, parseCalibrations, parsePairs, sizeFit, stopRefs, wquantile,
+  AT_SIZE, DISTANCE_BANDS, TOLERANCES, compareFits, distanceBand, formatComparison, nearestStop, parseCalibrations, parsePairs, sizeFit, stopRefs, wquantile,
 } from "./size-fit.mjs";
 import { PER_DAY, scene, sceneSection, sceneSetup } from "./scene.mjs";
 
@@ -450,7 +450,8 @@ const fmt = v => (v === null || v === undefined ? "—" : String(v));
 export const significant = (stops, total, key = "boards") => stops.filter(x => x[key] >= Math.max(30, 0.02 * total));
 
 const signed = v => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${v}`);
-const [T1, T2] = TOLERANCES.map(String);
+// The prose gives the tight share (±0.25) and the at-size share (±0.6).
+const [T1, T2] = [TOLERANCES[0], AT_SIZE].map(String);
 const fitPair = x => `${x.within[T1]}% / ${x.within[T2]}%`;
 
 /** The size-fit score in plain words, one bullet per line, for the summary and the size-fit section. */
@@ -530,8 +531,8 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
     { title: "Size fit per stop", text: `Cut boards at each stop and the share within ±${T1} and ±${T2} of its size${calibrated ? " and of its calibration value (the size where none was given)" : ""}, weighted by boards. These follow the From/To selection; the median and p10–p90 above are for the authored window.`,
       table: { query: { groupBy: D.stop, pivot: false, filters: [{ metric: D.absOffset, op: "not-empty" }], measures: [
         sumOf(M.units, "Cut boards"),
-        ...TOLERANCES.map(t => within(D.absOffset, t, `Within ±${t} of size %`)),
-        ...(calibrated ? TOLERANCES.map(t => within(D.absOffsetCal, t, `Within ±${t} of calibration %`)) : []),
+        ...[T1, T2].map(Number).map(t => within(D.absOffset, t, `Within ±${t} of size %`)),
+        ...(calibrated ? [T1, T2].map(Number).map(t => within(D.absOffsetCal, t, `Within ±${t} of calibration %`)) : []),
       ], sort: { by: "Cut boards", dir: "desc" } } } }] : []),
     { title: "Unmatched boards (Target 0): posted Postcut",
       text: "Boards outside every stop's band post their own length. A group just below a stop is boards that were not pushed fully against it.",
@@ -584,8 +585,9 @@ export function buildSpec({ title, window, stops, unit, s, merges, schedule, sum
       { label: "…short or not at a stop", unit: "%", query: { measures: [{ metric: M.units, op: "share", where: { metric: D.uncutReason, op: "in", value: ["Short of stop", "Not at a stop"] } }] } },
       { label: "Unmatched (Target 0)", unit: "%", query: { measures: [{ metric: M.units, op: "share", where: { metric: M.target, op: "=", value: 0 } }] } },
       { label: "Cut boards shorter than their stop", unit: "%", query: { measures: [{ metric: D.trim, op: "percent", where: { op: "<", value: 0 } }] } },
-      ...TOLERANCES.map(t => cutWithin(D.absOffset, t, `Cut within ±${t} of size`)),
-      ...(calibrated ? TOLERANCES.map(t => cutWithin(D.absOffsetCal, t, `Cut within ±${t} of calibration`)) : []),
+      // KPIs give the tight and the at-size share; the per-stop table has every tolerance.
+      ...[T1, T2].map(Number).map(t => cutWithin(D.absOffset, t, `Cut within ±${t} of size`)),
+      ...(calibrated ? [T1, T2].map(Number).map(t => cutWithin(D.absOffsetCal, t, `Cut within ±${t} of calibration`)) : []),
       { label: "Unmatched, under 1 from a stop", unit: "%", query: { measures: [{ metric: M.units, op: "share", where: { metric: D.unmatchedDistance, op: "=", value: DISTANCE_BANDS[0] } }] } },
     ],
     sections,

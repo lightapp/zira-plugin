@@ -7,6 +7,7 @@ export { AGENT_ROUTES } from './routes.js';
 const routeParameters = {
   incidentId: '[a-f0-9]{64}',
   id: '[1-9]\\d*', fileId: '[1-9]\\d*', deviceId: '[1-9]\\d*', jobId: '[1-9]\\d*', modelId: '[1-9]\\d*',
+  endpointId: '[1-9]\\d*', bindingId: '[1-9]\\d*', profileId: '[1-9]\\d*',
   day: '\\d{4}-\\d{2}-\\d{2}', session: '(?:\\d{4}-\\d{2}-\\d{2}-)?\\d{2}-\\d{2}(?:-\\d{2})?'
 };
 const agentRoutePatterns = AGENT_ROUTES.map(route => {

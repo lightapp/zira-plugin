@@ -1,0 +1,87 @@
+// Fixed package entrypoints. Never accept a script, executable, shell command or API URL.
+import { buildInfo } from './build-info.mjs';
+
+export const entries = [
+  ['plugin_updates', 'scripts/plugin-updates.mjs', ['check', 'plan'], 'Check for a public Zira update and show what changed. plan prepares verified ZIP update instructions for the host assistant; it does not install or change the plugin. No Git needed. Follow the plan only with user authorization.', true],
+  ['build_info', 'scripts/build-info.mjs', ['show'], 'Read the installed Zira version, audience and restrictions.', true],
+  ['auth', 'skills/health-report/scripts/health-report.mjs', ['status', 'login', 'logout', 'profiles'], 'Check sign-in, open browser login, or sign out. Never returns tokens. Login/logout change local credentials.'],
+  ['inventory', 'scripts/browse.mjs', ['menu', 'companies', 'sites', 'devices', 'dashboards', 'collection'], 'Find authorized Zira companies, sites, data sources and dashboards, or read a site\'s legacy collection settings (connection, unit ID, register maps).', true],
+  ['tasks', 'scripts/tasks.mjs', ['list', 'get', 'create'], 'Read tasks or preview/create a task. Creating can notify the assignee; apply only the user-approved preview.'],
+  ['preferences', 'scripts/preferences.mjs', ['show', 'update', 'forget'], 'Read or preview/save confirmed account preferences. update takes its JSON patch in input.'],
+  ['data_sources', 'scripts/data-sources.mjs', ['templates', 'create', 'copy', 'builder-link', 'metrics', 'create-custom', 'make-template'], 'Find templates, preview/create/copy a data source, build a custom data source on explicit shared metrics or a template from one, or obtain the form editor link.'],
+  ['dashboards', 'scripts/dashboards.mjs', ['create', 'copy-mapping', 'copy', 'fix-copy', 'relink', 'edit', 'site-settings'], 'Preview/create/copy a dashboard, restore or relink a copy (filters, shortcuts, camera/live-count tiles, every layout), edit dashboard settings, widgets and layouts field by field, or set a site\'s day start and week start. Writes preview first, apply once with --expected and read back.'],
+  ['dashboard_widgets', 'scripts/dashboard-widgets.mjs', ['context', 'save'], 'Read dashboard context or preview/save widgets. Apply requires the reviewed revision.'],
+  ['ai_report', 'scripts/ai-report.mjs', ['dashboards', 'widgets', 'people', 'create', 'draft', 'show', 'update-draft', 'schedule'], 'Preview/create or schedule Zira AI reports. Scheduling can send email; use only approved recipients and schedule.'],
+  ['vision', 'scripts/vision.mjs', ['list', 'status', 'mark'], 'Guide vision setup; preview/apply a completed setup step.'],
+  ['datasets', 'scripts/datasets.mjs', ['scope', 'find', 'sources', 'datasets', 'open'], 'Find a Zira dataset/model and obtain or open its Zira page.'],
+  ['live_view', 'scripts/remote.mjs', ['find', 'open', 'devices', 'status', 'watch'], 'Read camera live status or open live video. Sends the ordinary watcher heartbeat; cannot send camera commands.'],
+  ['health_report', 'skills/health-report/scripts/health-report.mjs', ['questions', 'discover', 'inspect', 'validate', 'run', 'prepare-share', 'tasks', 'update-task', 'schedule', 'dashboard-widgets', 'agent-data'], 'Run health reports locally. Task operations preview by default and require approved --apply; schedule only prepares a host handoff.'],
+  ['device_status', 'skills/device-status/scripts/device-status.mjs', ['sites', 'check', 'movement', 'acknowledge', 'history', 'schedule', 'run', 'handoff', 'list', 'remove'], 'Check camera health and dated movement. Admin-only history creates a private daily image/settings dashboard. Existing acknowledgement is local and never changes devices.'],
+  ['health_monitor', 'skills/schedule-health-report/scripts/monitor.mjs', ['sites', 'create', 'run', 'handoff', 'list', 'remove'], 'Manage local recurring health-report configurations. The host activates schedules separately.'],
+  ['readings', 'skills/readings-report/scripts/readings.mjs', ['sources', 'fetch', 'datasets', 'describe', 'query', 'report', 'saved', 'reports', 'open', 'serve'], 'Download readings, query the local cache and build/open local HTML reports.'],
+  ['scheduled_readings', 'skills/schedule-readings-report/scripts/scheduled-report.mjs', ['plan', 'create', 'run', 'schedule', 'list', 'remove'], 'Build and manage local scheduled readings reports; the host activates schedules separately.'],
+  ['trimsaw_sizes', 'skills/validate-trimsaw-sizes/scripts/trimsaw-sizes.mjs', ['windows', 'check', 'report', 'compare', 'scene', 'scene-setup'], 'Validate trimsaw sizes from cached readings and compare the camera view across its raw recordings; write local reports only. scene-setup --confirm downloads pinned dependencies and needs user consent; scene downloads recordings into a private cache (over 1 GB needs --confirm).'],
+  ['trimsaw_calibration', 'skills/calibrate-trimsaw-stops/scripts/calibration.mjs', ['plan'], 'Calculate a historical calibration plan. Does not change a camera.', true],
+  ['trimsaw_saw_line', 'scripts/trimsaw-saw-line.mjs', ['check', 'approve', 'require'], 'The saw-line gate every trimsaw calibration and PASS report needs: check reads the camera\'s trim saw status and newest raw recording (read-only, downloads into a private folder), measures where the cut board ends sit, draws the saw, stops and cut ends on the frame and writes a local record; approve records the user\'s explicit OK of a passed check\'s picture; require exits 0 only for an approved pass of this camera and saw. Never sends anything to a camera.'],
+  ['evaluate_model', 'skills/evaluate-model/scripts/evaluate.mjs', ['status', 'setup', 'fetch', 'find-download', 'run', 'open', 'local-files', 'choose', 'inspect'], 'Prepare/download/evaluate model files locally. setup downloads pinned dependencies and needs user consent; public builds reject .pt.'],
+  ['snapshot_sessions', 'skills/evaluate-model/scripts/sessions.mjs', ['list', 'fetch', 'prepare'], 'List/download QA sessions and prepare local evaluation datasets.'],
+  ['subset_dataset', 'skills/subset-dataset/scripts/subset.mjs', ['preview', 'create', 'upload'], 'Preview/build a subset locally and prepare its Zira upload. Follow the skill approval and upload handoff.'],
+  ['find_defects', 'skills/find-defects/scripts/defects.mjs', ['scan', 'review', 'others', 'progress', 'export', 'runs'], 'Rank defect candidates, serve the local human review page and export reviewed data.'],
+  ['vision_config', 'skills/configure-vision-camera/scripts/vision-config.mjs', ['backup', 'show', 'compare', 'check', 'frame', 'render', 'plan', 'rolling', 'apply', 'storage', 'clean'], 'Zira admins: back up, show, compare and audit Vision camera settings, grab a frame, and draft line/zone/settings plans locally; storage reads what the Vision app keeps on each phone. apply and clean preview; with --apply, apply sends one audited settings.apply through Zira and verifies the camera\'s reply, and clean sends one remote storage cleanup (deletes files on the phone) through the same route and follows its result.'],
+  ['training', 'skills/train-model/scripts/training.mjs', ['files', 'datasets', 'versions', 'models', 'trainings', 'training', 'merge', 'merge-status', 'train', 'stop'], 'Read a Vision camera\'s files, datasets, versions, models and trainings; preview/merge datasets and preview/start/stop a training. merge/train/stop --apply change Zira and train starts a paid GPU job; apply only the user-approved preview.'],
+  ['build_dataset', 'skills/build-dataset/scripts/build.mjs', ['plan', 'stage', 'status'], 'Combine labelled stills from several Vision cameras, sites or local folders into one dataset: plan checks and packs a ZIP locally (versions are downloaded); stage --apply uploads it once into a new dataset folder on the target camera, never overwriting; status reads the import. Apply only the user-approved plan.'],
+  ['review_labels', 'skills/review-labels/scripts/review.mjs', ['start', 'status', 'results', 'cancel'], 'AI label review of a Vision dataset in Zira\'s cloud, billed to Zira\'s annotation workspace: preview/start a job, read its status, download its labels and preview page, or cancel it. start/cancel --apply start or stop a paid job; apply only the user-approved preview.'],
+  ['compare_models', 'skills/compare-models/scripts/compare.mjs', ['start', 'status', 'results', 'review', 'verdict', 'cancel'], 'Score Vision models on dataset versions in Zira\'s cloud with the evaluate-model evaluator and compare candidates with a baseline: preview/start a job, read its status, download reports and the comparison, open the local review page, read the verdict, or cancel. start/cancel --apply start or stop a cloud job; apply only the user-approved preview.'],
+  ['form_entries', 'skills/edit-form-entries/scripts/form-entries.mjs', ['fields', 'list', 'edit', 'add'], 'Read a Zira form\'s fields and entries, and preview/edit one existing entry in place or add a new one. edit/add --apply change Zira once under a receipt and read back; apply only the user-approved preview.'],
+  ['collection', 'skills/setup-collection/scripts/collection.mjs', ['formats', 'gateways', 'status', 'profiles', 'profile', 'create-gateway', 'update-gateway', 'create-binding', 'set-maps', 'update-binding', 'test-read', 'release', 'secret-steps'], 'Zira generic collection: show the Modbus TCP / PostgreSQL formats, a site\'s gateways, bindings and their poll status, and meter profiles; preview/create or change a gateway, a binding and its metric maps; test-read a meter once (connects to the customer\'s equipment, saves nothing); release a gateway\'s back-off; name the AWS parameter an admin fills with a database login. Never takes secret values. Writes --apply once under a receipt and read back; apply only the user-approved preview.'],
+  ['nail_images','skills/inspect-nail-images/scripts/runtime.mjs', ['status', 'setup', 'run'], 'Check/setup the pinned OpenCV runtime or run a packaged nail-image analysis. Setup downloads dependencies and needs user consent.'],
+];
+
+// Many-dashboard rollout, restore from a backup and the sharing read live in dashboard-rollout.mjs and
+// run through the dashboards entry point. They are added here, apart from the entry's own line.
+const dashboards = entries.find(([name]) => name === 'dashboards');
+dashboards[2].push('rollout', 'restore', 'sharing');
+// Delete with backup lives in dashboard-delete.mjs and runs through the same entry point.
+dashboards[2].push('delete-widgets', 'delete');
+dashboards[3] += ' rollout previews one change (an edit, a copied section or a data source remap) on many dashboards and applies it one dashboard at a time with --expected FILE and --backup-dir DIR; restore previews/sets a dashboard back to a backup file; sharing only reads the server\'s shared/private state. delete-widgets and delete preview removing widgets or a whole dashboard (what points at them, what goes) and, only with the user-approved --apply --expected REVISION --backup-dir DIR, back the dashboard up, delete and read back; a delete cannot be undone.';
+
+export function catalog(info = buildInfo()) {
+  // A released plugin names its tools in build.json (one plugin per tier); a source checkout offers
+  // every tool whose skill is present.
+  return entries.filter(([name, script]) => Array.isArray(info.tools) ? info.tools.includes(name)
+    : !script.startsWith('skills/') || info.skills.includes(script.split('/')[1]))
+    .map(([name, script, commands, description, readOnly = false]) => ({
+      name, script, commands,
+      tool: { name, description: `${description} Use the matching Zira skill. command=help describes options. Arguments are separate CLI values, without node or a script path. Long calls return a job_id; poll job_status, never resubmit a write.`,
+        inputSchema: { type: 'object', properties: {
+          command: { type: 'string', enum: [...commands, 'help'] },
+          args: { type: 'array', items: { type: 'string', maxLength: 65536 }, maxItems: 128, description: 'CLI arguments after the command, e.g. ["--company-id","123"]. Use absolute file paths.' },
+          ...(name === 'preferences' ? { input: { type: 'object', description: 'JSON preference patch for update; passed to stdin.' } } : {}),
+        }, required: ['command'], additionalProperties: false },
+        annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, idempotentHint: readOnly, openWorldHint: !['build_info', 'trimsaw_calibration'].includes(name) },
+      },
+    }));
+}
+
+export function invocation(entry, input, info = buildInfo()) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Tool arguments must be an object.');
+  for (const key of Object.keys(input)) if (!['command', 'args', ...(entry.name === 'preferences' ? ['input'] : [])].includes(key)) throw new Error(`Unsupported input: ${key}`);
+  if (![...entry.commands, 'help'].includes(input.command)) throw new Error('Unsupported command. Use this tool\'s command enum.');
+  const args = input.args ?? [];
+  if (!Array.isArray(args) || args.length > 128 || args.some(a => typeof a !== 'string' || a.length > 65536 || a.includes('\0'))) throw new Error('args must be at most 128 bounded strings without NUL.');
+  // These options can select executable code or override trusted endpoints; they are not MCP inputs.
+  for (const value of args) {
+    if (/^--(?:python|tool-root|web-origin)(?:=|$)/.test(value)) throw new Error('Executable and service-origin overrides are unavailable through MCP.');
+    if (info.audience === 'public' && /^--with-pt(?:=|$)/.test(value)) throw new Error('Public builds do not support .pt models.');
+  }
+  if (info.audience === 'public' && entry.name === 'dashboards' && ['delete-widgets', 'delete'].includes(input.command)) throw new Error('Deleting dashboards and widgets is not available in this Zira build.');
+  if (input.input !== undefined && (!input.input || typeof input.input !== 'object' || Array.isArray(input.input))) throw new Error('input must be a JSON object.');
+  if (entry.name === 'build_info') {
+    if (args.length) throw new Error('build_info takes no args.');
+    return [];
+  }
+  if (entry.name === 'auth') return input.command === 'help' ? ['help'] : ['auth', input.command, ...args];
+  // discover is the one supported positional subcommand. No auth/token/request passthrough.
+  if (entry.name === 'health_report' && input.command === 'discover' && !['companies', 'sites', 'devices', 'users'].includes(args[0])) throw new Error('discover needs companies, sites, devices or users as its first argument.');
+  return [input.command, ...args];
+}

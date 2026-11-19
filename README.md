@@ -4,12 +4,12 @@ Ask about production, check cameras, work with datasets and models, create repor
 and follow up on tasks from your AI chat. Sign in with your own Zira account;
 you can access only the companies and sites your account permits.
 
-This is Zira's public Git installation source (early access). It is separate from
+This is Zira's public installation source (early access). It is separate from
 the apps' official plugin directories.
 
 ## Install
 
-**You don't type any commands. Claude or Codex installs Zira for you in about five minutes.**
+**You don't type any commands. Claude or Codex installs Zira and its helpers for you.**
 
 1. **Open the right place.** Zira runs on your computer, so it only works here:
    - **Claude desktop app:** click **Code** (next to Chat and Cowork) and start a new session.
@@ -31,72 +31,61 @@ the apps' official plugin directories.
 > can't see your Zira data. There, the assistant may try to click through Zira in a browser,
 > which is slow.
 
-No GitHub account, API key or terminal is needed. You see only the companies and sites your
+No Git, GitHub account, API key or terminal is needed. You see only the companies and sites your
 Zira account can see. To update later, ask in the same place: **“Update the Zira plugin.”**
 
+## Updates
+
+Zira checks for a newer release when you use it, and tells you what changed. Say **“Update Zira”**
+and your assistant downloads the new public ZIP, verifies it and updates your installation.
+Your sign-in, preferences, reports and schedules stay in place. Start a new local chat afterwards.
+Older installations need one update to receive these notices. There is no background installation
+or notification while your AI app is closed. Checks use public release metadata, with no Zira account data.
+
+Each release has an immutable `vVERSION` tag. Preview updates stay on `preview`; approved stable
+updates stay on `stable`. There is no stable release yet. ZIP installations do not automatically
+fetch the next ZIP through the host's marketplace updater. Use the chat update flow.
+
+For a deliberate source or channel switch, follow [the switching guide](references/distribution.md).
+Both public and internal copies use `zira@zira`; never leave two enabled copies.
+
 <details>
-<summary>Manual installation commands</summary>
+<summary>Manual installation commands after downloading the ZIP</summary>
 
-Requires Git, Node.js 20+ and a current Codex or Claude Code installation.
-
-**Codex:**
-
-```sh
-codex plugin marketplace add lightapp/zira-plugin --ref preview && codex plugin add zira@zira
-```
-
-**Claude Code:**
-
-```sh
-claude plugin marketplace add lightapp/zira-plugin#preview && claude plugin install zira@zira
-```
-
-The plugin starts a local `zira` MCP server using Node.js. Approve the host's MCP connection when prompted. It runs the packaged tools on this computer and uses the same Zira browser sign-in. No npm install is needed for the server or Node.js helpers. Model evaluation optionally
-installs its own Python dependencies when requested.
-
-Prefer to click? Register the source with the first command above, then open the
-app's plugin browser, choose the **Zira** source, open the **Zira** plugin and click **Install**.
-In Claude Code, open `/plugin` and use its Marketplaces/Discover tabs to add
-`lightapp/zira-plugin` and install Zira. There is no verified universal one-click
-GitHub installation link for both clients.
-
-</details>
-
-If you already have an internal Zira plugin installed, disable that copy before
-using this one so both copies do not answer the same requests. Both builds use `zira@zira`. Replace the configured Zira source when switching;
-follow [the switching guide](references/distribution.md) to preserve Claude settings
-and saved data. Do not install both copies.
-
-## Updates and specific versions
-
-Each released version gets an immutable `vVERSION` tag. Preview versions update
-`preview`; approved stable versions update `stable`. There is no stable release yet. Updating this repository does not immediately update every person's installation.
+Download a published version ZIP from [Tags](https://github.com/lightapp/zira-plugin/tags), verify
+its `release.json` hashes and extract it into a persistent user-owned folder. Keep hidden files.
+Register that extracted folder, replacing PATH below with its absolute location:
 
 ```sh
 # Codex
-codex plugin marketplace upgrade zira && codex plugin add zira@zira
+codex plugin marketplace add "PATH"
+codex plugin add zira@zira
 
 # Claude Code
-claude plugin marketplace update zira && claude plugin update zira@zira
+claude plugin marketplace add "PATH"
+claude plugin install zira@zira
 ```
 
-Start a new chat afterwards. Claude Code also offers marketplace auto-update in
-`/plugin` → Marketplaces (enable it for Zira if desired).
+For an update, download and verify the next ZIP, preserve the previous source for rollback,
+and replace the contents of the same persistent source folder. Then use `codex plugin add zira@zira`,
+or `claude plugin marketplace update zira` followed by `claude plugin update zira@zira`.
+Codex's `marketplace upgrade` requires a Git source and must not be used for this ZIP setup.
+Verify the installed build and start a new session. These commands do not install Node.js or Python;
+the guided setup includes their installation and the separate public analysis packages.
 
-To pin a version on a fresh installation, add the marketplace with
-`codex plugin marketplace add lightapp/zira-plugin --ref vVERSION` or
-`claude plugin marketplace add lightapp/zira-plugin#vVERSION`, replacing VERSION
-with an existing tag, then run the matching plugin install command above.
-For an existing installation, use the marketplace manager to remove/re-add the
-source at that tag; preserve your saved data. Use the same method to roll back.
+</details>
 
 ## What is included
 
-Onboarding, device status, health and production reports, scheduling, site and
-data-source discovery, tasks, dashboard creation and copying, forms, Vision setup,
-dataset navigation, model evaluation, dataset subsets and human-reviewed defect search.
-Offline Inspect Nail Images bundles its OpenCV tool. Public model evaluation supports
-`.tflite` only. Claude Code includes the Device Status panel with manual refresh.
+This marketplace holds two plugins that share one Zira sign-in. Install only what you use.
+
+| Plugin | For | Includes |
+| --- | --- | --- |
+| **Zira** (`zira@zira`) | Everyone | Onboarding, device status, health and production reports, scheduling, site and data-source discovery, tasks, dashboard creation and copying, forms, Vision setup, dataset navigation and trimsaw size checks. Needs Node.js only. Claude Code includes the Device Status panel with manual refresh. |
+| **Zira Vision** (`zira-vision@zira`, in [`plugins/zira-vision`](plugins/zira-vision)) | AI vision teams | Model evaluation, dataset subsets, human-reviewed defect search and offline Inspect Nail Images with its bundled OpenCV tool. Adds Python. Public model evaluation supports `.tflite` only. |
+
+Add Zira Vision next to Zira with `claude plugin install zira-vision@zira` or
+`codex plugin add zira-vision@zira`, or tick it on <https://help.zira.us/ai-plugins>.
 Public builds use the production Zira environment.
 The separately generated Claude directory candidate is in `directory/claude`. It keeps all public skills and local MCP tools, but omits the startup hook and optional panels. Root Git installations keep those features. Neither package is a directory approval.
 The exact installed skill inventory is in [`skills`](skills). Skills invoke the declared local MCP server for packaged actions; [tool usage and job handling](references/local-mcp.md) describes the interface. The separate remote Zira MCP service is not required. The Claude panels and session-start hook retain their documented local execution paths.
@@ -125,55 +114,47 @@ Use these steps when the user asks to install Zira from this repository. A bare 
 without an installation request is not permission to change the user's computer.
 Carry out the setup with your available local tools; do not just give the user shell commands.
 
-Assume the user is not technical. Follow [setup help](references/setup-help.md) for tone and
-for everything beyond the plugin itself: which app and tab to use, installing Node.js or Git
-for them, and what they will see. Never ask them to type commands; tell them what to click.
+Assume the user is not technical. Follow [setup help](references/setup-help.md) for tone and app
+selection. Do the work with host tools; never require the user to type commands.
 
-1. **Identify the current host.** Install only in the Codex or Claude Code app the user
-   is using, even if both clients are installed. Use host context; ask which app only if
-   it is unclear. Confirm you have access to the user's computer, not just a remote/cloud
-   sandbox. Claude's Chat and Cowork tabs, web chats and cloud sessions cannot install or
-   run Zira, even when they can see a folder. There, stop and give the steps from setup
-   help's “Where Zira works” for their app (for the Claude desktop app: click **Code**,
-   start a new session, paste the same message). Do not claim a cloud install reaches their computer.
-2. **Check prerequisites and existing state.** Check Git, Node.js 20+ and the host's
-   supported plugin commands. Use `codex plugin list --json` and
-   `codex plugin marketplace list --json`, or the corresponding `claude` commands.
-   If Node.js or Git is missing or too old, explain it in one plain sentence and, once the
-   user agrees, install it for them as setup help describes; then continue. If a plugin
-   command is unavailable, check the host's supported installation tools or plugin UI and
-   walk the user through the specific missing click. Do not invent executable paths, edit
-   client configuration files by hand, or install anything without the user's agreement.
-3. **Select the source.** The public source is `lightapp/zira-plugin`, branch `preview`,
-   identity `zira@zira`. For a fresh installation, run the matching commands in
-   [Manual installation commands](#install) above. Use the current user's scope.
-   If this exact source is already configured, refresh it with the matching commands in
-   [Updates and specific versions](#updates-and-specific-versions); install the plugin if
-   the source exists but the plugin is not installed. If a different Zira source or a pinned
-   version is configured, explain the difference and resolve the user's intended switch
-   before replacing it. Follow [the switching guide](references/distribution.md) to preserve
-   settings and saved data. Never delete credentials, reports or schedules, and never leave
-   two enabled Zira copies. Respect the app's permission prompts and managed installation policies.
-4. **Verify the installed copy.** Read the host's plugin listing again; confirm `zira@zira`
-   is installed and enabled. Resolve its actual installed path from the host's result and run
-   `node <installed-plugin-root>/scripts/build-info.mjs`. Confirm public audience, preview
-   channel and the version/source commit recorded in the selected source's `release.json`.
-   Do not report success from a downloaded repository or an exit code alone. If a check
-   fails, explain what remains and help resolve it; do not start sign-in or account operations
-   just to prove installation.
-5. **Finish in plain language.** In a few short lines and no technical terms: Zira is
-   installed (version in passing); start a **new** session in this same place and say
-   “Help me get started with Zira”; the first time, they click **Allow** and sign in to Zira
-   in the page that opens. Then, on its own line, where to find Zira every time, in setup
-   help's wording for their app (for the Claude desktop app: “Whenever you want Zira, open
-   the Claude app, click **Code** and start a new session. Chat and Cowork can't see your
-   Zira data.”). Mention any remaining click or restart. Installation itself does not sign
-   in, create tasks or activate schedules.
+1. **Use the current local host.** Install in the selected Codex or Claude Code client only.
+   Web/cloud chats cannot install on the user's computer. Use the Code tab in Claude desktop.
+2. **Check existing state.** Read native plugin/marketplace lists. Preserve existing Zira settings,
+   credentials, reports, schedules and runtime environments. Explain a source switch; do not
+   replace an internal/managed source or a pinned channel without authorization.
+3. **Use the public ZIP, without Git.** Read the selected channel's public `build.json`, confirm
+   public audience, clean source, production-only profiles, no .pt support and the expected channel.
+   Download `https://github.com/lightapp/zira-plugin/archive/refs/tags/vVERSION.zip`, substituting the
+   validated published version. Extract safely to staging, rejecting traversal, absolute paths and
+   symlinks. Check the release identity and all `release.json` file hashes before running code.
+   Put the complete extracted package in a persistent user-owned folder, such as
+   `~/.zira/plugins/public/preview/current`, outside Downloads/temp/plugin caches. Register it with
+   the selected native marketplace manager and install `zira@zira`, using the commands above.
+4. **Prepare all helpers.** Install a supported Node.js LTS (20+) and compatible Python (3.12 is
+   tested) from official sources if missing. Use each installed public helper's documented setup:
+   model evaluation, Inspect Nail Images and trimsaw camera-view check (`scene-setup --confirm`).
+   Keep all three pinned environments separate and outside the plugin cache. No npm install or
+   PyTorch/.pt support. A full-setup request authorizes these helpers; honor OS approval prompts,
+   never ask for passwords in chat and never bypass IT protections. Report unsupported dependencies.
+5. **Verify and begin.** Read the actual installed path/version and `scripts/build-info.mjs`, check
+   the public identity against the selected release, MCP startup and helper readiness. If tools
+   are loaded, start getting-started: browser sign-in, the user's priority and one useful read-only
+   first task. Otherwise give the exact new-session/restart step and this continuation:
+   “Finish my Zira setup, check any pending dependencies, and help me get started.” Do not create
+   tasks, change devices, publish reports or start schedules as an installation test.
+
+For updates, use `plugin_updates` with `command: plan` (or `node scripts/plugin-updates.mjs plan`)
+and carry out its native ZIP procedure after authorization. It prepares a plan; the host assistant
+performs the update. Keep the previous source until the installed version is verified.
 
 Installation references: [Codex](https://developers.openai.com/plugins/build/plugins),
 [Claude Code](https://code.claude.com/docs/en/discover-plugins).
 
 ## Data handling and local execution
+
+Public installations check GitHub release metadata at most once a day per local cache, with a short
+timeout. The request contains no Zira account or customer data. It downloads no executable code.
+Checks are skipped for internal and directory builds; set `ZIRA_CHECK_UPDATES=0` to disable them.
 
 Zira runs packaged Node.js helpers on your computer. Browser sign-in uses Zira's
 Cognito domain (`https://zira.auth.us-west-2.amazoncognito.com`); API requests go to

@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { Blocked, fingerprint, guardedWrite, id, isMain, link, liveSession, normalizeName, receiptsFile, resolveSite, runCli, siteDataSources } from './client.mjs';
 import { describeSources, metricList } from '../skills/readings-report/scripts/store.mjs';
+import { sourceInventory } from './dashboard-sources.mjs';
 
 export const ROUTES = [
   ['GET', /^\/sites\/list$/], ['GET', /^\/devices\/list$/], ['GET', /^\/devices\/all$/],
@@ -27,15 +28,15 @@ const choice = (x, choices, where) => assert(choices.includes(x), `Invalid ${whe
 const canonical = x => Array.isArray(x) ? x.map(canonical) : obj(x) ? Object.fromEntries(Object.keys(x).sort().filter(k => x[k] !== undefined).map(k => [k, canonical(x[k])])) : x;
 export const revision = dashboard => fingerprint(canonical(dashboard));
 
-export async function context({ call, companyId, siteId, dashboardId, profile = 'prod' }) {
+export async function context({ call, companyId, siteId, dashboardId, profile = 'prod', allowCrossSite = false }) {
   assert(id(dashboardId), 'Dashboard ID required');
   const site = await resolveSite(call, companyId, siteId);
   const dashboard = (await call('GET', `/dashboards/${dashboardId}`)).data;
   if (String(dashboard?.id) !== dashboardId || String(dashboard?.site?.id ?? dashboard?.siteId) !== siteId || String(dashboard?.type?.id) !== '3')
     throw new Blocked('scope', 'The selected dashboard must be a next-generation dashboard in the selected site.');
-  const inventory = new Map((await siteDataSources(call, site)).map(d => [String(d.id), d]));
+  const { inventory, crossSiteSources } = await sourceInventory(call, site, dashboard, allowCrossSite);
   const ids = (dashboard.devices ?? []).map(d => String(d.id));
-  assert(ids.length > 0 && ids.length <= 50 && ids.every(x => inventory.has(x)), 'Dashboard data sources must belong to this site (maximum 50).');
+  assert(ids.length <= 50 && ids.every(x => inventory.has(x)), 'Dashboard data sources must belong to this site (maximum 50).');
   const details = await describeSources(call, ids);
   const metrics = new Map();
   for (const deviceId of ids) {
@@ -47,7 +48,9 @@ export async function context({ call, companyId, siteId, dashboardId, profile = 
       metrics.set(m.id, { ...m, keyName: raw?.metric?.keyName ?? raw?.keyName ?? raw?.metric?.name ?? null, alias: `m${m.id}`, deviceIds: [...(prior?.deviceIds ?? []), deviceId], allowedValues: raw?.validationFormula?.allowedValues ?? null });
     }
   }
-  return { kind: 'dashboard-widget-context', profile, site, dashboard, revision: revision(dashboard), url: link(profile, `/dashboards/${dashboardId}`), metrics: [...metrics.values()], dimensions: DIMENSIONS, chartTypes: CHARTS, supportedTypes: Object.keys(TYPES), aiSummarySources: (dashboard.widgets ?? []).filter(w => String(w.type?.id) === '15').map(w => ({ id:String(w.id), name:w.name })), answerStyles:ANSWER_STYLES };
+  return { kind: 'dashboard-widget-context', profile, site, dashboard, revision: revision(dashboard), url: link(profile, `/dashboards/${dashboardId}`), metrics: [...metrics.values()], dimensions: DIMENSIONS, chartTypes: CHARTS, supportedTypes: Object.keys(TYPES), aiSummarySources: (dashboard.widgets ?? []).filter(w => String(w.type?.id) === '15').map(w => ({ id:String(w.id), name:w.name })), answerStyles:ANSWER_STYLES,
+    // Read-only cross-site context: save() never passes allowCrossSite, so it still refuses these dashboards.
+    ...(allowCrossSite ? { crossSiteSources, ...(crossSiteSources.length ? { readOnly:true, note:'Some data sources of this dashboard belong to other sites (crossSiteSources). This context is for reading only: save refuses to write widgets on a dashboard with data sources outside the selected site.' } : {}) } : {}) };
 }
 
 function checkFilters(filters, metrics, devices) {
@@ -371,7 +374,7 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
 }
 
 const HELP = `Native Zira widgets — preview by default; no deletion or device changes.
-context --company-id ID --site-id ID --dashboard-id ID [--out FILE]
+context --company-id ID --site-id ID --dashboard-id ID [--out FILE] [--allow-cross-site]
 save --company-id ID --site-id ID --dashboard-id ID --spec FILE
   [--apply --expected REVISION] [--receipts FILE]
 Common: --profile prod|integ
@@ -381,17 +384,20 @@ aiSummary stores a question and selected analytical widgets; it does not run AI 
 context reads metric schemas and saved widgets; save validates and previews exact payload/layout.
 Preview warnings (first_series_categories) flag column/bar charts that may drop categories.
 --apply saves once with receipt and read-back. Partial/unknown writes stop; never replay a batch.
+--allow-cross-site (context only, read-only) also describes a dashboard whose data sources belong to
+other sites and lists them as crossSiteSources; save always refuses such a dashboard.
 JSON stdout; errors stderr. Exit 0 success, 2 invalid/failed, 3 unverified, 4 blocked.
 `;
 async function main() {
   const { values:o, positionals:[command] } = parseArgs({ allowPositionals:true, options:{
-    'company-id':{type:'string'}, 'site-id':{type:'string'}, 'dashboard-id':{type:'string'}, profile:{type:'string',default:'prod'}, out:{type:'string'}, spec:{type:'string'}, apply:{type:'boolean'}, expected:{type:'string'}, receipts:{type:'string'},
+    'company-id':{type:'string'}, 'site-id':{type:'string'}, 'dashboard-id':{type:'string'}, profile:{type:'string',default:'prod'}, out:{type:'string'}, spec:{type:'string'}, apply:{type:'boolean'}, expected:{type:'string'}, receipts:{type:'string'}, 'allow-cross-site':{type:'boolean'},
   } });
   if (!command || command === 'help') { console.log(HELP); return; }
   assert(['context','save'].includes(command), 'Unknown command');
   const options = { call:await liveSession(o.profile, { allow:ROUTES, maxRequests:80 }), profile:o.profile, companyId:o['company-id'], siteId:o['site-id'], dashboardId:o['dashboard-id'] };
   let result;
-  if (command === 'context') result = await context(options);
+  assert(command === 'context' || !o['allow-cross-site'], '--allow-cross-site is for context (read-only); save requires every data source to belong to the site');
+  if (command === 'context') result = await context({ ...options, allowCrossSite:!!o['allow-cross-site'] });
   else {
     assert(o.spec, '--spec required'); const raw = await readFile(o.spec, 'utf8'); assert(raw.length <= 256*1024, 'Spec exceeds 256 KiB');
     result = await author({ ...options, spec:JSON.parse(raw), apply:!!o.apply, expected:o.expected, receipts:receiptsFile(o.receipts) });

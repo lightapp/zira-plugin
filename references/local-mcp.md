@@ -40,6 +40,7 @@ The standalone legacy health-report skill archive is a CLI-only artifact, not th
 | `scheduled-report.mjs` | `scheduled_readings` |
 | `trimsaw-sizes.mjs` | `trimsaw_sizes` |
 | `calibration.mjs plan` | `trimsaw_calibration` |
+| `trimsaw-saw-line.mjs` (check, approve, require) | `trimsaw_saw_line` |
 | `evaluate.mjs` | `evaluate_model` |
 | `sessions.mjs` | `snapshot_sessions` |
 | `subset.mjs` | `subset_dataset` |
@@ -47,6 +48,8 @@ The standalone legacy health-report skill archive is a CLI-only artifact, not th
 | `review.mjs` (review-labels, internal builds) | `review_labels` |
 | `build.mjs` (build-dataset, internal builds) | `build_dataset` |
 | `compare.mjs` (compare-models, internal builds) | `compare_models` |
+| `form-entries.mjs` (edit-form-entries, internal builds) | `form_entries` |
+| `collection.mjs` (setup-collection, internal builds) | `collection` |
 | `defects.mjs` | `find_defects` |
 | Inspect Nail Images `runtime.mjs` and packaged Python analyses | `nail_images` |
 | `vision-config.mjs` (configure-vision-camera, internal builds) | `vision_config` |

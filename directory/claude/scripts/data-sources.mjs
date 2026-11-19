@@ -6,6 +6,8 @@ import {
   Blocked, ZiraApiError, argValue, fingerprint, guardedWrite, id, isMain, link, liveSession, normalizeName,
   originFor, receiptsFile, resolveSite, route, runCli, siteDataSources, siteSystem, text,
 } from "./client.mjs";
+import { BUILDER_ROUTES, METER_KINDS, createCustom, makeTemplate, metrics } from "./data-source-builder.mjs";
+import { readFile } from "node:fs/promises";
 
 const HELP = `Zira data sources and forms — guided creation
 node scripts/data-sources.mjs templates --company-id ID --site-id ID --kind vision|pallet
@@ -15,6 +17,11 @@ node scripts/data-sources.mjs copy --company-id ID --site-id ID --source-id ID [
     [--target-company-id ID] [--target-site-id ID] [--include-triggers]
     [--apply] [--allow-repeat] [--resolve-pending none|ID] [--receipts FILE]
 node scripts/data-sources.mjs builder-link --company-id ID --site-id ID --kind form|custom [--name TEXT]
+node scripts/data-sources.mjs metrics --company-id ID --site-id ID [--metric-ids 1,16,29] [--search TEXT]
+node scripts/data-sources.mjs create-custom --company-id ID --site-id ID (--meter-kind KIND | --spec FILE) [--name TEXT]
+    [--apply] [--allow-repeat] [--resolve-pending none|ID] [--receipts FILE]
+node scripts/data-sources.mjs make-template --company-id ID --site-id ID --source-id ID [--name TEXT]
+    [--description TEXT] [--scope site|company|global] [--apply] [--allow-repeat] [--resolve-pending none|ID] [--receipts FILE]
 Common: --profile prod|integ
 
 create previews by default. --apply creates one data source from the template in the
@@ -24,6 +31,12 @@ target site is given (default name "<source> (copy)"). --apply copies it once, a
 Duplicate does, and reads it back. Triggers are copied only with --include-triggers and only
 within the same company.
 builder-link returns Zira's form/custom data-source editor for the site; it writes nothing.
+metrics looks up shared and site metrics by ID or name; it writes nothing.
+create-custom previews a custom data source whose fields each use an explicit metric ID (checked
+in Zira first). --meter-kind takes a generic collection meter kind: power-3ph, flow, pressure,
+temperature, temp-humidity. --apply creates it once and reads back every field's metric.
+make-template previews a data source template made from a copy of a data source (scope site by
+default; company; global for Zira admins). --apply creates it once and reads it back.
 --resolve-pending settles an earlier attempt with an unknown outcome after the user checked Zira.
 Exit 0 success, 2 invalid/failed, 3 created but unverified, 4 blocked (JSON explains).
 `;
@@ -288,10 +301,13 @@ export async function main(args = process.argv.slice(2)) {
     "allow-repeat": { type: "boolean" }, receipts: { type: "string" }, profile: { type: "string" },
     "resolve-pending": { type: "string" }, "source-id": { type: "string" }, "target-company-id": { type: "string" },
     "target-site-id": { type: "string" }, "include-triggers": { type: "boolean" },
+    "metric-ids": { type: "string" }, search: { type: "string" }, "meter-kind": { type: "string" }, spec: { type: "string" },
+    description: { type: "string" }, scope: { type: "string" },
   } });
   const profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod";
   originFor(profile);
-  const scope = { call: await liveSession(profile, { allow: ROUTES }), profile, companyId: o["company-id"], siteId: o["site-id"], kind: o.kind };
+  const allow = ["metrics", "create-custom", "make-template"].includes(args[0]) ? BUILDER_ROUTES : ROUTES;
+  const scope = { call: await liveSession(profile, { allow }), profile, companyId: o["company-id"], siteId: o["site-id"], kind: o.kind };
   if (args[0] === "templates") return templates(scope);
   if (args[0] === "create")
     return createFromTemplate({ ...scope, templateId: o["template-id"], name: o.name, apply: !!o.apply,
@@ -301,7 +317,16 @@ export async function main(args = process.argv.slice(2)) {
       name: o.name, includeTriggers: !!o["include-triggers"], apply: !!o.apply, allowRepeat: !!o["allow-repeat"],
       resolve: o["resolve-pending"], receipts: receiptsFile(o.receipts) });
   if (args[0] === "builder-link") return builderLink({ ...scope, name: o.name });
-  throw new Error("Choose templates, create, copy or builder-link");
+  const write = { apply: !!o.apply, allowRepeat: !!o["allow-repeat"], resolve: o["resolve-pending"], receipts: receiptsFile(o.receipts) };
+  if (args[0] === "metrics") return metrics({ ...scope, metricIds: o["metric-ids"], search: o.search });
+  if (args[0] === "create-custom") {
+    if (!!o["meter-kind"] === !!o.spec) throw new Error(`Give either --meter-kind (${Object.keys(METER_KINDS).join(", ")}) or --spec FILE`);
+    const spec = o.spec ? JSON.parse(await readFile(o.spec, "utf8")) : undefined;
+    return createCustom({ ...scope, kind: o["meter-kind"], spec, name: o.name, ...write });
+  }
+  if (args[0] === "make-template")
+    return makeTemplate({ ...scope, sourceId: o["source-id"], name: o.name, description: o.description, scope: o.scope ?? "site", ...write });
+  throw new Error("Choose templates, create, copy, builder-link, metrics, create-custom or make-template");
 }
 
 const cliProfile = () => argValue("profile") ?? process.env.ZIRA_PROFILE ?? "prod";

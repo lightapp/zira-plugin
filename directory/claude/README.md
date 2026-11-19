@@ -33,6 +33,10 @@ The [local MCP reference](references/local-mcp.md) documents tools and long-runn
 ## Data handling and local execution
 
 
+Public installations check GitHub release metadata at most once a day per local cache, with a short
+timeout. The request contains no Zira account or customer data. It downloads no executable code.
+Checks are skipped for internal and directory builds; set `ZIRA_CHECK_UPDATES=0` to disable them.
+
 Zira runs packaged Node.js helpers on your computer. Browser sign-in uses Zira's
 Cognito domain (`https://zira.auth.us-west-2.amazoncognito.com`); API requests go to
 `https://api.zira.us` using your Zira account. Requested readings, images and datasets

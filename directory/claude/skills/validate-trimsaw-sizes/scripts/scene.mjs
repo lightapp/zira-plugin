@@ -13,7 +13,7 @@ import { Blocked, liveSession } from "../../../scripts/client.mjs";
 import {
   LIST_LIMIT, RAW_VIDEO_ROUTES, confirmDownload, downloadRawVideos, listOrExplain, parseRawVideoName,
 } from "../../../scripts/raw-videos.mjs";
-import { exec, findPython } from "../../evaluate-model/scripts/evaluate.mjs";
+import { exec, findPython } from "../../../scripts/python.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const FILES = { analyzer: path.join(here, "scene_drift.py"), requirements: path.join(here, "requirements-scene.txt") };

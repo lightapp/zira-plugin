@@ -1,0 +1,32 @@
+{
+  "name": "zira-vision",
+  "displayName": "Zira Vision",
+  "version": "0.3.51-preview.33",
+  "description": "AI vision tools for Zira: evaluate models on datasets, find rare defects, build dataset subsets and inspect nail images. Add it next to the Zira plugin.",
+  "author": {
+    "name": "Zira",
+    "url": "https://zira.us"
+  },
+  "homepage": "https://zira.us",
+  "icon": "./assets/zira-directory-icon.png",
+  "keywords": [
+    "zira",
+    "operations",
+    "device health",
+    "manufacturing",
+    "vision"
+  ],
+  "supportUrl": "https://help.zira.us/docs",
+  "privacyPolicyUrl": "https://zira.us/privacy",
+  "termsOfServiceUrl": "https://zira.us/terms.html",
+  "documentationUrl": "https://help.zira.us/docs",
+  "mcpServers": {
+    "zira-vision": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs"
+      ]
+    }
+  }
+}

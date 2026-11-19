@@ -3,14 +3,18 @@
 // and the company/site/user/task discovery routes. Adding a route needs backend review.
 export const AGENT_ROUTES = Object.freeze([
   'GET /companies/list',
-  'GET /sites/list',
+  'GET /sites/list', 'PUT /sites/{id}',
   'GET /users/details', 'GET /users/site-members', 'GET /users/last-viewed',
   'GET /tasks/list', 'GET /tasks/counters', 'GET /tasks/{id}', 'POST /tasks/new', 'PUT /tasks/{id}',
   'GET /dashboards/list', 'GET /dashboards/{id}', 'POST /dashboards/new', 'POST /dashboards/copy',
   'POST /dashboards/{id}/widgets', 'PUT /dashboards/widgets/{id}',
-  'PUT /dashboards/configuration-layout/{id}', 'PUT /dashboards/{id}/system',
+  'PUT /dashboards/configuration-layout/{id}', 'PUT /dashboards/{id}/system', 'PUT /dashboards/{id}',
+  'DELETE /dashboards/widgets/{id}', 'DELETE /dashboards/{id}',
   'GET /devices/list', 'GET /devices/all', 'GET /devices/template', 'GET /devices/{id}',
   'POST /devices/from-template', 'POST /devices/copy',
+  'POST /devices/template', 'PUT /devices/template/{id}',
+  'GET /meterSchemas/metrics',
+  'POST /forms/new', 'GET /forms/{id}', 'PUT /forms/{id}',
   'GET /channels/{id}', 'GET /channels/all', 'GET /channels/followers/get',
   'PUT /channels/{id}/addChannelFollowers',
   'GET /systems/{id}', 'POST /systems/new', 'POST /systems/{id}/attach-meter',
@@ -18,6 +22,7 @@ export const AGENT_ROUTES = Object.freeze([
   'GET /schedules/{id}', 'POST /schedules/new',
   'GET /files/{fileId}', 'PUT /files/attach/device/{id}', 'POST /files/signed-uploads/create',
   'GET /meters-data/readings-files', 'GET /meters-data/prepare-readings-files', 'POST /meters-data/reading/form',
+  'PUT /meters-data/reading/manual',
   'GET /analysis/data/{id}', 'GET /analysis/agent-data/{id}',
   'GET /prod-vision/{deviceId}/health-history', 'GET /prod-vision/{deviceId}/movement-reviews',
   'PUT /prod-vision/{deviceId}/movement-reviews/{incidentId}',
@@ -36,5 +41,12 @@ export const AGENT_ROUTES = Object.freeze([
   'POST /prod-vision/{deviceId}/model-evaluation-jobs/cancel',
   'GET /vision-ui/training-jobs', 'GET /vision-ui/training-jobs/{jobId}', 'GET /vision-ui/training-jobs/{jobId}/logs',
   'POST /vision-ui/training-jobs/{jobId}/stop',
-  'GET /vision-ui/models', 'GET /vision-ui/models/{modelId}'
+  'GET /vision-ui/models', 'GET /vision-ui/models/{modelId}',
+  'GET /collection/endpoints', 'POST /collection/endpoints', 'PATCH /collection/endpoints/{endpointId}',
+  'POST /collection/endpoints/{endpointId}/release',
+  'GET /collection/bindings', 'GET /collection/bindings/{bindingId}', 'POST /collection/bindings',
+  'PATCH /collection/bindings/{bindingId}', 'POST /collection/bindings/{bindingId}/copy',
+  'PUT /collection/bindings/{bindingId}/metric-maps',
+  'GET /collection/profiles', 'GET /collection/profiles/{profileId}', 'POST /collection/profiles',
+  'GET /collection/status', 'POST /collection/test-read'
 ]);

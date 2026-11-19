@@ -29,13 +29,14 @@ setting something up, tell the user in one sentence where to find Zira next time
 - Claude Code in a terminal: “Start Claude Code as usual and ask about Zira.”
 - Codex app: “Whenever you want Zira, start a new Local thread in Codex. ChatGPT chats can't see your Zira data.”
 
-## Helper programs: Node.js and Git
+## Helper programs: Node.js and Python
 
 Zira needs **Node.js 20 or newer** (a free, widely used program that runs Zira's tools). Installing
-from GitHub also needs **Git**. Check quietly first (`node --version`, `git --version`). If both are
+the full public package also prepares **Python** and its separate analysis environments. The ZIP route does not need Git. Check quietly first (`node --version`, `python3 --version`). If both are
 present, don't mention them.
 
-If Node.js is missing or older than 20, explain it once in plain words and ask, for example:
+A full-setup request already authorizes Node.js and the public Python helpers; explain briefly and
+continue without asking again. Otherwise, if Node.js is missing or older than 20, ask, for example:
 “Zira needs a free helper program called Node.js to run on your computer. I can set it up for you
 now. It takes about two minutes: you'll see a standard installer and may be asked for your computer
 password. Shall I go ahead?” Wait for a yes. Then:
@@ -52,10 +53,11 @@ password. Shall I go ahead?” Wait for a yes. Then:
 - Check that `node --version` now reports 20 or newer. On a Mac the official installer puts it in
   `/usr/local/bin/node`.
 
-If Git is missing on a Mac, running `git` (or `xcode-select --install`) opens Apple's window offering
-the “command line developer tools”. Tell them to click **Install**, wait until it finishes (a few
-minutes) and let you know. On Windows, Claude Code already needs Git, so it is usually present. If it
-is missing, offer the official installer from `https://git-scm.com` and walk them through it.
+Use the public ZIP procedure in the README; do not install Git for Zira. Prepare all three public
+Python environments (model evaluation, Inspect Nail Images, trimsaw camera-view check) separately
+using the packaged setup helpers. A full-setup request authorizes these dependencies; do not ask
+again unless the scope changes or the operating system requires approval. Never claim readiness
+if a dependency is unavailable on that platform.
 
 If their computer is managed by IT and blocks installers, don't try to work around it. Offer a short
 message they can send to IT, for example: “Please install Node.js LTS (version 20 or newer) from
@@ -81,11 +83,20 @@ Never fall back to running Zira's scripts some other way to get around a missing
 
 ## Updating Zira
 
-When the user asks to update Zira, do it for them with the host's plugin commands, then ask them to
-start a new session in the same place:
+For the full public plugin, use `plugin_updates` with `command: plan`. It checks the current
+release and returns a Git-free ZIP update procedure. The tool only prepares the plan: use the
+host's tools to download, verify, preserve the previous source and update the actual installation.
+An explicit request to update already authorizes that update; do not ask again for the same action.
+Keep sign-in, preferences, reports, schedules and runtime environments. Verify the new installed
+version, then ask for a new session in the same app. Older versions without this tool can use the
+setup/update prompt from the public plugin page or the current public README.
 
-- Claude Code (including the Claude desktop app's Code tab): `claude plugin marketplace update zira`, then `claude plugin update zira@zira`.
-- Codex: `codex plugin marketplace upgrade zira`, then `codex plugin add zira@zira`.
+For a persistent local ZIP source, after replacing the verified source:
+- Claude Code: `claude plugin marketplace update zira`, then `claude plugin update zira@zira`.
+- Codex: `codex plugin add zira@zira`. Do not use `marketplace upgrade` for a local source.
+
+Internal/managed and directory installations use their approved distribution mechanism. Do not
+switch them to the public ZIP or a different channel without explicit authorization.
 
 ## What users see the first time
 

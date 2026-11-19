@@ -3,7 +3,9 @@
 // check, report and compare) and video replays (calibrate-trimsaw-from-video replay-stats).
 // Pure and dependency-free; every share and quantile is weighted by boards.
 
-export const TOLERANCES = [0.25, 0.5];
+// ±0.6 is "at size" for Kamps trimsaws (the camera's own match band); ±0.5 is kept for older reports.
+export const TOLERANCES = [0.25, 0.5, 0.6];
+export const AT_SIZE = 0.6;
 // Unmatched boards by distance to the nearest stop: just outside the camera's ±0.6 match band,
 // a little further, or not near any stop.
 export const DISTANCE_BANDS = ["Under 1", "1 to 2", "Over 2"];

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Public release discovery only: never installs code, invokes Git, or reads Zira credentials.
+// Installing is plugin-self-update.mjs (Claude Code, automatic) or the host assistant following plan.
 import { promises as fs, realpathSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -105,8 +106,18 @@ export function updatePlan(result) {
     ] };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  // Not top-level await: plugin-self-update.mjs imports this module back.
+  (async () => {
   const [command = 'check', ...args] = process.argv.slice(2);
-  if (!['check', 'plan', 'help'].includes(command) || args.length) { console.error('Use plugin-updates.mjs check|plan|help'); process.exitCode = 2; }
-  else if (command === 'help') console.log('Check the current public release or prepare an update plan. No installation, Git, credentials or customer API calls. plan refreshes the release check. Set ZIRA_CHECK_UPDATES=0 to disable checks.');
+  if (!['check', 'plan', 'auto-on', 'auto-off', 'auto-status', 'help'].includes(command) || args.length) { console.error('Use plugin-updates.mjs check|plan|auto-on|auto-off|auto-status|help'); process.exitCode = 2; }
+  else if (command.startsWith('auto-')) {
+    const auto = await import('./plugin-self-update.mjs');
+    if (command !== 'auto-status') auto.setAutoUpdate(command === 'auto-on');
+    const where = auto.target();
+    console.log(JSON.stringify({ automaticUpdates: auto.autoUpdateEnabled() ? 'on' : 'off', appliesHere: where.managed,
+      ...(where.managed ? {} : { reason: where.reason, otherwise: 'Updates are announced; say "update Zira" to install one.' }), last: auto.lastOutcome() }));
+  }
+  else if (command === 'help') console.log('Check the current public release or prepare an update plan. No installation, Git, credentials or customer API calls. plan refreshes the release check. auto-on, auto-off and auto-status switch or show automatic updates (Claude Code, public ZIP installation). Set ZIRA_CHECK_UPDATES=0 to disable checks.');
   else { const result = await checkForUpdate({ force: command === 'plan' }); console.log(JSON.stringify(command === 'plan' ? updatePlan(result) : result)); }
+  })();
 }

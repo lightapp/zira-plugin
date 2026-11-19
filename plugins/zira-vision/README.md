@@ -1,7 +1,8 @@
 # Zira Vision
 
-AI vision tools for Zira, for people who build and check models: evaluate a model on a dataset,
-find rare defect examples for human review, build dataset subsets and inspect nail images.
+AI vision tools for Zira, for people who build and check the models behind their cameras:
+evaluate a model on your own images, find rare defect examples for human review, build dataset
+subsets and analyse images on your computer.
 
 Zira Vision is an add-on to the **Zira** plugin from the same marketplace. Install Zira first; it
 finds your sites, cameras and datasets by name. Both plugins use the same Zira sign-in.
@@ -20,7 +21,7 @@ Start a new chat afterwards.
 ## What it needs
 
 - A local Claude Code or Codex session on your computer, and Node.js 20+.
-- Python 3.10+ for model evaluation, subsets, defect review and nail-image analysis. Each feature
+- Python 3.10+ for model evaluation, subsets, defect review and image analysis. Each feature
   builds its own pinned environment only after you agree.
 - Your own Zira account. You see and change only what your account allows; writes show a preview first.
 

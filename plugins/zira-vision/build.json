@@ -1,15 +1,14 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.51-preview.33",
+  "version": "0.3.51-preview.34",
   "channel": "preview",
   "audience": "public",
   "updateChecks": true,
   "updateNotes": [
-    "Zira now comes as two plugins from the same place: Zira for everyday questions, reports, dashboards and tasks, and the Zira Vision add-on for models and image analysis.",
-    "Model evaluation, defect review, dataset subsets and nail-image analysis moved to Zira Vision. If you use them, ask your assistant to add Zira Vision.",
-    "Zira on its own no longer needs Python."
+    "Zira now updates itself in Claude Code: a new version installs in the background when you start a session and is ready in the next one.",
+    "To switch that off, say \"stop updating Zira automatically\". In Codex, say \"update Zira\" when you see the notice."
   ],
-  "sourceCommit": "6ec5f31aacf8aa448d25813c30aca4ebe4c6df55",
+  "sourceCommit": "39f84b6d5147b31b46ee18ae8acab92e29179c19",
   "sourceDirty": false,
   "plugin": "zira-vision",
   "tools": [

@@ -2,7 +2,7 @@
 import { buildInfo } from './build-info.mjs';
 
 export const entries = [
-  ['plugin_updates', 'scripts/plugin-updates.mjs', ['check', 'plan'], 'Check for a public Zira update and show what changed. plan prepares verified ZIP update instructions for the host assistant; it does not install or change the plugin. No Git needed. Follow the plan only with user authorization.', true],
+  ['plugin_updates', 'scripts/plugin-updates.mjs', ['check', 'plan', 'auto-on', 'auto-off', 'auto-status'], 'Check for a public Zira update and show what changed. In Claude Code a public ZIP installation updates itself in the background at session start; auto-status shows whether that applies here and the last result, auto-off and auto-on switch it. plan prepares verified ZIP update instructions for the host assistant where updates are not automatic; it does not install or change the plugin. No Git needed. Follow the plan only with user authorization.', true],
   ['build_info', 'scripts/build-info.mjs', ['show'], 'Read the installed Zira version, audience and restrictions.', true],
   ['auth', 'skills/health-report/scripts/health-report.mjs', ['status', 'login', 'logout', 'profiles'], 'Check sign-in, open browser login, or sign out. Never returns tokens. Login/logout change local credentials.'],
   ['inventory', 'scripts/browse.mjs', ['menu', 'companies', 'sites', 'devices', 'dashboards', 'collection'], 'Find authorized Zira companies, sites, data sources and dashboards, or read a site\'s legacy collection settings (connection, unit ID, register maps).', true],

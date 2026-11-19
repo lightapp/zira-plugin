@@ -83,6 +83,12 @@ Never fall back to running Zira's scripts some other way to get around a missing
 
 ## Updating Zira
 
+In Claude Code a public ZIP installation updates itself: a newer release installs in the
+background at session start and is ready in the next session. `plugin_updates` with
+`command: auto-status` says whether that applies on this computer and how the last update went;
+`auto-off` and `auto-on` switch it when the user asks. Where it does not apply (Codex, or another
+kind of installation), or when the user wants the update now, use the plan below.
+
 For the full public plugin, use `plugin_updates` with `command: plan`. It checks the current
 release and returns a Git-free ZIP update procedure. The tool only prepares the plan: use the
 host's tools to download, verify, preserve the previous source and update the actual installation.

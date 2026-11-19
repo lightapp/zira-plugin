@@ -36,15 +36,23 @@ Zira account can see. To update later, ask in the same place: **“Update the Zi
 
 ## Updates
 
-Zira checks for a newer release when you use it, and tells you what changed. Say **“Update Zira”**
-and your assistant downloads the new public ZIP, verifies it and updates your installation.
-Your sign-in, preferences, reports and schedules stay in place. Start a new local chat afterwards.
-Older installations need one update to receive these notices. There is no background installation
-or notification while your AI app is closed. Checks use public release metadata, with no Zira account data.
+In Claude Code, Zira updates itself. When you start a session and a newer release exists, Zira
+downloads it in the background, checks every file against the release list and installs it through
+Claude Code's own plugin manager. It is ready in your next session, with one line about what
+changed. The session you are in keeps working. To switch this off, say **“Stop updating Zira
+automatically”**; say **“Update Zira automatically”** to switch it back on.
+
+In Codex, Zira tells you when a newer release exists and what changed. Say **“Update Zira”** and
+your assistant downloads the new public ZIP, verifies it and updates your installation, then
+start a new local chat.
+
+Your sign-in, preferences, reports and schedules stay in place either way. Older installations
+need one update to receive this. Nothing is installed or announced while your AI app is closed.
+Checks and downloads use the public release only, with no Zira account data.
 
 Each release has an immutable `vVERSION` tag. Preview updates stay on `preview`; approved stable
-updates stay on `stable`. There is no stable release yet. ZIP installations do not automatically
-fetch the next ZIP through the host's marketplace updater. Use the chat update flow.
+updates stay on `stable`. There is no stable release yet. The host's marketplace updater alone
+cannot fetch the next ZIP; Zira's own updater or the chat update flow does.
 
 For a deliberate source or channel switch, follow [the switching guide](references/distribution.md).
 Both public and internal copies use `zira@zira`; never leave two enabled copies.

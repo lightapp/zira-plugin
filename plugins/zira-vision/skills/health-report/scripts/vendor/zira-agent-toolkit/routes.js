@@ -13,6 +13,7 @@ export const AGENT_ROUTES = Object.freeze([
   'GET /devices/list', 'GET /devices/all', 'GET /devices/template', 'GET /devices/{id}',
   'POST /devices/from-template', 'POST /devices/copy',
   'POST /devices/template', 'PUT /devices/template/{id}',
+  'GET /devices/aggregator/{id}', 'POST /devices/aggregator',
   'GET /meterSchemas/metrics',
   'POST /forms/new', 'GET /forms/{id}', 'PUT /forms/{id}',
   'GET /channels/{id}', 'GET /channels/all', 'GET /channels/followers/get',

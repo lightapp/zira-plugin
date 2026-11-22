@@ -6,9 +6,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
   Blocked, argValue, fingerprint, guardedWrite, id, idList, isMain, link, listAll, liveSession, normalizeName,
-  originFor, receiptsFile, resolveSite, route, runCli, siteDataSources, text,
+  originFor, receiptsFile, resolveScope, resolveSite, route, runCli, scopeDashboards, siteDataSources, text,
 } from "./client.mjs";
 import { argumentDevice, resaveBody, verifyWidget } from "./dashboard-widgets.mjs";
+import { describeSources } from "../skills/readings-report/scripts/store.mjs";
 import {
   EDIT_ROUTES, PLATFORM_CHANGE, SITE_ROUTES, applyWrites, editDashboard, loadDashboard, notEnabled, planEdit, planRelink, putSiteDays,
   revision, runWrites, siteDashboardList, siteDaysBody, siteRow, siteSettings, verifyWrites,
@@ -19,8 +20,10 @@ const DELETE_PLATFORM_CHANGE = "Zira's plugin access update for dashboard delete
 
 const HELP = `Zira dashboards — start a next-generation dashboard
 node scripts/dashboards.mjs create --company-id ID --site-id ID --name TEXT
-    --data-source-ids ID,ID [--description TEXT] [--range RANGE] [--interval INTERVAL]
+    --data-source-ids ID,ID | --company-level [--description TEXT] [--range RANGE] [--interval INTERVAL]
     [--apply] [--allow-repeat] [--resolve-pending none|ID] [--receipts FILE]
+    --company-level: a Private dashboard without data sources of its own, for embedded/custom widgets that
+    read any site of the company (dashboard-widgets.mjs types embedded and custom).
 node scripts/dashboards.mjs copy-mapping --company-id ID --site-id ID --dashboard-id ID
     [--target-company-id ID] [--target-site-id ID] [--out FILE]
 node scripts/dashboards.mjs copy --company-id ID --site-id ID --dashboard-id ID [--name TEXT]
@@ -135,6 +138,7 @@ export const ROUTES = [
   ["PUT", /^\/dashboards\/configuration-layout\/[1-9]\d*$/],
 ];
 const MAX_DATA_SOURCES = 50;
+const MAX_COMPANY_DATA_SOURCES = 200;
 
 export function uniqueName(name, existing) {
   const taken = new Set(existing.map(normalizeName));
@@ -163,32 +167,45 @@ const siteDashboards = (call, site) =>
 
 export async function createDashboard({
   call, profile = "prod", companyId, siteId, name, description, dataSourceIds, range = "today", interval = "hourly",
-  apply = false, allowRepeat = false, receipts, resolve,
+  apply = false, allowRepeat = false, receipts, resolve, companyLevel = false,
 }) {
-  const site = await resolveSite(call, companyId, siteId);
+  // --company-level: a company dashboard (no site) as Zira web's company channel creates it; its data sources may be
+  // on any site of the company. Otherwise a site dashboard with that site's data sources.
+  if (companyLevel && siteId != null && siteId !== "") throw new Error("--company-level creates a dashboard of the company, without a site: leave out --site-id");
+  const site = companyLevel ? await resolveScope(call, companyId, null) : await resolveSite(call, companyId, siteId);
   const dashboardName = text(name, 120);
   if (!dashboardName) throw new Error("A dashboard name is required");
   if (!Object.hasOwn(RANGES, range)) throw new Error("Unknown --range");
   if (!Object.hasOwn(INTERVALS, interval)) throw new Error("Unknown --interval");
   const wanted = idList(dataSourceIds);
-  if (!wanted.length || !wanted.every(id)) throw new Error("Choose one or more data source IDs from this site");
-  if (wanted.length > MAX_DATA_SOURCES) throw new Error(`Choose at most ${MAX_DATA_SOURCES} data sources`);
-  const inventory = new Map((await siteDataSources(call, site)).map(d => [String(d.id), d]));
-  const missing = wanted.filter(w => !inventory.has(w));
-  if (missing.length) throw new Blocked("scope", "Some data sources are not in the selected site", { missing });
+  // A company-level dashboard may start without data sources (headers, shortcuts, embedded/custom widgets).
+  if (companyLevel ? !wanted.every(id) : !wanted.length || !wanted.every(id)) throw new Error("Choose one or more data source IDs from this site");
+  if (wanted.length > (companyLevel ? MAX_COMPANY_DATA_SOURCES : MAX_DATA_SOURCES)) throw new Error(`Choose at most ${companyLevel ? MAX_COMPANY_DATA_SOURCES : MAX_DATA_SOURCES} data sources`);
+  let inventory;
+  if (companyLevel) {
+    const details = wanted.length ? await describeSources(call, wanted) : new Map();
+    const foreign = wanted.filter(w => !details.get(w) || details.get(w).isDeleted || String(details.get(w).companyId ?? "") !== site.companyId);
+    if (foreign.length) throw new Blocked("scope", "Some data sources are not readable data sources of the selected company", { missing: foreign });
+    inventory = details;
+  } else {
+    inventory = new Map((await siteDataSources(call, site)).map(d => [String(d.id), d]));
+    const missing = wanted.filter(w => !inventory.has(w));
+    if (missing.length) throw new Blocked("scope", "Some data sources are not in the selected site", { missing });
+  }
   const dataSources = wanted.map(w => ({ id: w, name: String(inventory.get(w).name ?? "Data source") }));
-  const existing = (await siteDashboards(call, site)).filter(d => !d.isDeleted).map(d => String(d.name ?? ""));
+  const existing = (await (companyLevel ? scopeDashboards(call, site) : siteDashboards(call, site))).filter(d => !d.isDeleted).map(d => String(d.name ?? ""));
   const suggestedName = uniqueName(dashboardName, existing);
   const preview = {
-    site: { id: site.id, name: site.name }, name: dashboardName, description: text(description, 500) || null,
+    ...(companyLevel ? { company: { id: site.companyId, name: site.name } } : { site: { id: site.id, name: site.name } }), name: dashboardName, description: text(description, 500) || null,
     dataSources, defaultRange: range, defaultInterval: interval, type: "next-generation",
+    ...(companyLevel ? { companyLevel: true, private: true, note: "Company-level (company channel's Dashboards tab, no site). Add widgets with dashboard-widgets.mjs without --site-id; data sources may be on any site of the company. It starts Private: only you see it until it is shared." } : {}),
     ...(suggestedName !== dashboardName ? { nameTaken: true, suggestedName } : {}),
   };
   const webPrompt = `Create a dashboard\ndata-source-ids: ${wanted.join(",")}`;
   if (!apply) return { kind: "dashboard-draft", profile, preview, applied: false, webPrompt };
   const outcome = await guardedWrite({
     file: receipts, allowRepeat, resolve, resolveField: "dashboardId",
-    key: fingerprint({ op: "create-dashboard", profile, siteId: site.id, name: normalizeName(dashboardName), dataSources: [...wanted].sort() }),
+    key: fingerprint({ op: "create-dashboard", profile, siteId: site.id, ...(companyLevel ? { companyId: site.companyId } : {}), name: normalizeName(dashboardName), dataSources: [...wanted].sort(), ...(companyLevel ? { companyLevel: true } : {}) }),
     summary: { kind: "dashboard", siteId: site.id, name: dashboardName },
     precheck: async () => {
       if (suggestedName !== dashboardName)
@@ -196,14 +213,14 @@ export async function createDashboard({
     },
     // The precheck guaranteed the name was free, so exactly one match now is this attempt's.
     reconcile: async () => {
-      const found = (await siteDashboards(call, site)).filter(d => normalizeName(d.name) === normalizeName(dashboardName));
+      const found = (await (companyLevel ? scopeDashboards(call, site) : siteDashboards(call, site))).filter(d => normalizeName(d.name) === normalizeName(dashboardName));
       return found.length === 1 ? { dashboardId: String(found[0].id) } : null;
     },
     run: async progress => {
       const body = (await call("POST", "/dashboards/new", {
         name: dashboardName,
         description: preview.description,
-        siteId: site.id,
+        ...(companyLevel ? {} : { siteId: site.id }),
         companyId: site.companyId,
         isLocked: true,
         isShared: false,
@@ -211,10 +228,12 @@ export async function createDashboard({
         defaultDisplayInterval: { id: INTERVALS[interval] },
         configurationLayout: { lg: [], md: [], sm: [], xs: [] },
         type: { id: "3", name: "Device" },
-        devices: dataSources,
-        isPrivate: false,
+        ...(dataSources.length ? { devices: dataSources } : {}),
+        isPrivate: !!companyLevel,
       })).data;
-      const dashboardId = createdDashboardId(body) ?? await findByName(call, site, dashboardName);
+      const dashboardId = createdDashboardId(body) ?? (companyLevel
+        ? (await scopeDashboards(call, site)).filter(d => normalizeName(d.name) === normalizeName(dashboardName)).map(d => String(d.id))[0]
+        : await findByName(call, site, dashboardName));
       if (!dashboardId) throw new Error("Create returned no dashboard ID; check the site's dashboards before retrying");
       await progress({ dashboardId });
       let saved = {}, readBack = null;
@@ -225,7 +244,8 @@ export async function createDashboard({
       }
       const savedDevices = new Set((saved.devices ?? saved.dataSources ?? []).map(d => String(d?.id)));
       const verified = String(saved.id ?? "") === dashboardId && normalizeName(saved.name) === normalizeName(dashboardName) &&
-        String(saved.site?.id ?? saved.siteId ?? site.id) === site.id && wanted.every(w => savedDevices.has(w));
+        (companyLevel ? (saved.site?.id ?? saved.siteId) == null && String(saved.companyId ?? "") === site.companyId
+          : String(saved.site?.id ?? saved.siteId ?? site.id) === site.id) && wanted.every(w => savedDevices.has(w));
       return { receipt: { dashboardId }, dashboardId, verified, ...(readBack ? { readBack } : {}) };
     },
   });
@@ -913,7 +933,7 @@ export async function main(args = process.argv.slice(2)) {
     interval: { type: "string" }, apply: { type: "boolean" }, "allow-repeat": { type: "boolean" },
     receipts: { type: "string" }, profile: { type: "string" }, "resolve-pending": { type: "string" },
     "dashboard-id": { type: "string" }, "target-company-id": { type: "string" }, "target-site-id": { type: "string" },
-    mapping: { type: "string" }, out: { type: "string" }, "copy-id": { type: "string" },
+    mapping: { type: "string" }, out: { type: "string" }, "copy-id": { type: "string" }, "company-level": { type: "boolean" },
     "dashboard-mapping": { type: "string" }, "match-site-day-start": { type: "boolean" }, spec: { type: "string" },
     expected: { type: "string" }, "skip-platform": { type: "boolean" }, "day-start": { type: "string" }, "first-day-of-week": { type: "string" },
     plan: { type: "string" }, backup: { type: "string" }, "backup-dir": { type: "string" }, "dashboard-ids": { type: "string" },
@@ -967,7 +987,7 @@ export async function main(args = process.argv.slice(2)) {
     call: await liveSession(profile, { allow: ROUTES, maxRequests: 40 }), profile,
     companyId: o["company-id"], siteId: o["site-id"], name: o.name, description: o.description,
     dataSourceIds: o["data-source-ids"], range: o.range ?? "today", interval: o.interval ?? "hourly",
-    apply: !!o.apply, allowRepeat: !!o["allow-repeat"], resolve: o["resolve-pending"], receipts,
+    apply: !!o.apply, allowRepeat: !!o["allow-repeat"], resolve: o["resolve-pending"], receipts, companyLevel: !!o["company-level"],
   });
 }
 

@@ -7,7 +7,7 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
-  Blocked, annotateReceipt, explain, fingerprint, guardedWrite, id, idList, link, liveSession, normalizeName, resolveSite, siteDataSources, text,
+  Blocked, annotateReceipt, explain, fingerprint, guardedWrite, id, idList, link, liveSession, normalizeName, resolveScope, resolveSite, siteDataSources, text, dashboardInScope,
 } from "./client.mjs";
 import {
   EDIT_ROUTES, KINDS, PLATFORM_CHANGE, applyWrites, deriveLayout, diffPaths, layoutChanges, loadDashboard, normalizeWidget,
@@ -768,11 +768,12 @@ export function planRestore({ current, backup, siteDashboards = [] }) {
 
 export async function restoreDashboard({ call, profile = "prod", companyId, siteId, dashboardId, backup, backupFile, expected, apply = false, backupDir,
   skipPlatform = false, receipts, now = () => new Date() }) {
-  const site = await resolveSite(call, companyId, siteId);
+  const site = await resolveScope(call, companyId, siteId);
   const current = await loadDashboard(call, site, dashboardId);
   const { dashboard: old, takenAt, label } = backupDashboard(backup);
   const oldSite = old.site?.id ?? old.siteId;
-  assert(oldSite == null || String(oldSite) === site.id, `The backup is of a dashboard at site ${oldSite}, not ${site.name}`);
+  assert(site.kind === "company" ? oldSite == null : oldSite == null || String(oldSite) === site.id,
+    site.kind === "company" ? `The backup is of a dashboard at site ${oldSite}, not a company-level dashboard` : `The backup is of a dashboard at site ${oldSite}, not ${site.name}`);
   const renamed = normalizeName(old.name) !== normalizeName(current.name);
   const plan = planRestore({ current, backup: old, siteDashboards: renamed ? await siteDashboardList(call, site) : [] });
   const deferred = skipPlatform ? plan.writes.filter(w => w.needsPlatform) : [];
@@ -815,16 +816,17 @@ export const SHARING_NOTE = "Read from Zira's server just now. Private in the da
 export async function sharing({ call: rawCall, profile = "prod", companyId, siteId, dashboardIds, sites, now = () => new Date() }) {
   const call = rememberSites(rawCall);
   const wanted = sites ? sites.map(s => ({ companyId: String(s.companyId ?? ""), siteId: String(s.siteId ?? ""), dashboardId: String(s.dashboardId ?? "") }))
-    : idList(dashboardIds).map(d => ({ companyId, siteId, dashboardId: d }));
-  assert(sites || (id(String(companyId ?? "")) && id(String(siteId ?? ""))), "sharing needs --company-id and --site-id with --dashboard-ids, or --plan FILE");
+    : idList(dashboardIds).map(d => ({ companyId, siteId: siteId ?? "", dashboardId: d }));
+  // Without --site-id the dashboards are the company's company-level dashboards.
+  assert(sites || id(String(companyId ?? "")), "sharing needs --company-id (and --site-id for a site's dashboards) with --dashboard-ids, or --plan FILE");
   assert(wanted.length > 0 && wanted.length <= 200, "Choose 1–200 dashboards (--dashboard-ids A,B,… with --company-id and --site-id, or --plan FILE)");
   assert(wanted.every(w => id(w.dashboardId)), "Dashboard IDs must be IDs");
   const dashboards = [];
   for (const w of wanted) {
     try {
-      const site = await resolveSite(call, w.companyId, w.siteId);
+      const site = await resolveScope(call, w.companyId, w.siteId);
       const d = (await call("GET", `/dashboards/${w.dashboardId}`)).data ?? {};
-      if (String(d.id ?? "") !== w.dashboardId || String(d.site?.id ?? d.siteId ?? "") !== site.id)
+      if (String(d.id ?? "") !== w.dashboardId || !dashboardInScope(d, site))
         throw new Blocked("scope", `Dashboard ${w.dashboardId} is not a dashboard of ${site.name} that this user can see`);
       const shared = typeof d.isShared === "boolean" ? d.isShared : null;
       dashboards.push({ id: w.dashboardId, name: String(d.name ?? ""), site: { id: site.id, name: site.name }, private: shared === null ? null : !shared,

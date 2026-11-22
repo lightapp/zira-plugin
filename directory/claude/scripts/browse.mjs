@@ -10,7 +10,8 @@ const ORIGINS = { prod: "https://my.zira.us", integ: "https://zira-webinteg.zira
 const HELP = `Zira inventory — read-only browsing
 node scripts/browse.mjs menu|companies|sites|devices|dashboards|collection
   --company-id ID       Required for sites, devices, dashboards and collection
-  --site-id ID          Required for devices, dashboards and collection
+  --site-id ID          Required for devices and collection; for dashboards, leave it out to list the
+                        company-level dashboards (the company channel's Dashboards tab, no site)
   --device-ids ID,...   collection only: read just these data sources (from this site)
   --profile prod|integ  Defaults to ZIRA_PROFILE, then prod
   --health-profiles     devices only: also read each device (within the cap) and add
@@ -88,7 +89,8 @@ export async function browse(get, kind, { companyId, siteId, profile = "prod", h
   if (!["companies", "sites", "devices", "dashboards", "collection"].includes(kind))
     throw new Error("Choose companies, sites, devices, dashboards or collection");
   if (kind !== "companies" && !id(companyId)) throw new Error("Company ID required");
-  if (["devices", "dashboards", "collection"].includes(kind) && !id(siteId)) throw new Error("Site ID required");
+  if (["devices", "collection"].includes(kind) && !id(siteId)) throw new Error("Site ID required");
+  if (kind === "dashboards" && siteId != null && siteId !== "" && !id(siteId)) throw new Error("Site ID must be an ID");
   if (deviceIds != null && (kind !== "collection" || !Array.isArray(deviceIds) || !deviceIds.length || !deviceIds.every(x => id(x))))
     throw new Error("--device-ids takes a comma-separated list of data source IDs, for collection only");
   let requests = 0;
@@ -98,7 +100,13 @@ export async function browse(get, kind, { companyId, siteId, profile = "prod", h
     return get(route);
   };
   let rows, excluded = 0;
-  if (["devices", "dashboards", "collection"].includes(kind)) {
+  if (kind === "dashboards" && !id(siteId)) {
+    // Company-level dashboards: next-generation dashboards of the company without a site.
+    const raw = await pages(boundedGet, "/dashboards/list", { companyIds: companyId, dashboardTypeIds: "3" });
+    rows = raw.filter(d => !d.isDeleted && (d.site?.id ?? d.siteId) == null && String(d.company?.id ?? d.companyId ?? "") === companyId &&
+      String(d.dashboardType?.id ?? d.dashboardTypeId ?? d.type?.id ?? d.typeId ?? "3") === "3");
+    excluded = raw.filter(d => !d.isDeleted).length - rows.length;
+  } else if (["devices", "dashboards", "collection"].includes(kind)) {
     const sites = await discover(boundedGet, "sites", companyId);
     if (!sites.some(s => s.id === siteId)) throw new Error("Site outside selected company");
     const listKind = kind === "collection" ? "devices" : kind;

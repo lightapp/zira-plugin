@@ -2,9 +2,12 @@
 // Native dashboard widget authoring. No model service, arbitrary API proxy or delete route.
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import { Blocked, fingerprint, guardedWrite, id, isMain, link, liveSession, normalizeName, receiptsFile, resolveSite, runCli, siteDataSources } from './client.mjs';
+import { Blocked, dashboardInScope, fingerprint, guardedWrite, id, isMain, link, liveSession, normalizeName, receiptsFile, resolveScope, runCli, siteDataSources } from './client.mjs';
+import { INDICATOR_FIELDS, SHORTCUT_FIELDS, indicatorSettings, shortcutSettings, operationalPayload } from './dashboard-operational.mjs';
+import { COLS, validateLayout, overlaps } from './dashboard-layout.mjs';
 import { describeSources, metricList } from '../skills/readings-report/scripts/store.mjs';
 import { sourceInventory } from './dashboard-sources.mjs';
+import { CUSTOM_FIELDS, EMBEDDED_FIELDS, EMBEDDED_PLATFORM_CHANGE, MODES, checkEmbedded, customScope, embeddedPayload, embeddedTarget, modeOf, resolveReferences } from './dashboard-embedded.mjs';
 
 export const ROUTES = [
   ['GET', /^\/sites\/list$/], ['GET', /^\/devices\/list$/], ['GET', /^\/devices\/all$/],
@@ -13,11 +16,11 @@ export const ROUTES = [
 ];
 export const CHARTS = { '2': 'Column', '3': 'Pie', '4': 'Bar', '5': 'TimeSeries', '6': 'KPI', '7': 'KPI Table', '10': 'Grouped KPI' };
 export const DIMENSIONS = ['meter_id', 'meter_name', 'event_date', 'inherit_from_widget', 'event_date_minutes', 'event_date_5_minutes', 'event_date_15_minutes', 'event_date_hour', 'event_date_day', 'event_date_week', 'event_date_month', 'event_date_num', 'event_date_month_num', 'event_date_hour_num', 'event_date_dow', 'reading_position'];
-const TYPES = { dataResearch: ['15', 'DataResearch'], header: ['6', 'Header'], filter: ['20', 'Filter'], readings: ['17', 'ReadingsNextGen'], aiSummary: ['18', 'Agent NextGen'] };
+const TYPES = { dataResearch: ['15', 'DataResearch'], header: ['6', 'Header'], filter: ['20', 'Filter'], readings: ['17', 'ReadingsNextGen'], aiSummary: ['18', 'Agent NextGen'], indicator: ['11','KpiLastReading'], shortcuts: ['7','ShortcutList'], embedded: ['19','EmbeddedCustomWidget'], custom: ['19','EmbeddedCustomWidget'] };
 export const ANSWER_STYLES = ['Use Emojis', 'Use Table', 'Write Shortly', 'Use Bullet Points', 'Include Comparisons', 'Use Colors', 'Drill down'];
 const COMMON = ['name', 'description'];
 const ANALYTIC = [...COMMON, 'chartType', 'groupBy', 'aggregations', 'customAgg', 'derivedMetrics', 'filters', 'drillDown', 'flatTable', 'sortBy', 'sortDirection', 'kpiTableSort', 'limit', 'limitUnit', 'multiYAxises', 'maxYAxises', 'withGauges', 'withColors', 'fontSize', 'isFormatTime', 'pieDisplay', 'isCenterLabel', 'agentQuestion', 'gaugesRange', 'colors', 'formatTime', 'stacking', 'pieColors', 'showInLegend'];
-const FIELDS = { dataResearch: ANALYTIC, header: [...COMMON, 'fontSize', 'isCenterHeader'], filter: [...COMMON, 'hideHeader', 'displayType', 'interactionMode', 'quickFilterSelectionMode', 'filtersList', 'widgetsTargetKeys'], readings: [...COMMON, 'device', 'columnsSelected', 'filters', 'isKeepEditMode'], aiSummary: [...COMMON, 'question', 'answerStyle', 'answerExample', 'fontSize', 'widgetIds', 'widgetKeys'] };
+const FIELDS = { embedded:[...COMMON,...EMBEDDED_FIELDS], custom:[...ANALYTIC,...CUSTOM_FIELDS], indicator:[...COMMON,...INDICATOR_FIELDS], shortcuts:[...COMMON,...SHORTCUT_FIELDS], dataResearch: ANALYTIC, header: [...COMMON, 'fontSize', 'isCenterHeader'], filter: [...COMMON, 'hideHeader', 'displayType', 'interactionMode', 'quickFilterSelectionMode', 'filtersList', 'widgetsTargetKeys'], readings: [...COMMON, 'device', 'columnsSelected', 'filters', 'isKeepEditMode'], aiSummary: [...COMMON, 'question', 'answerStyle', 'answerExample', 'fontSize', 'widgetIds', 'widgetKeys'] };
 const OPS = { numeric: ['1','2','4','5','6','10','11','12'], text: ['6','10','11','12'], image: ['1','2','4','5','6','10'], list: ['1','2','4','5','6','10','11','12'], timestamp: ['1','2','4','5','6','10'], boolean: ['1','2','4','5','6','10'] };
 const assert = (ok, message) => { if (!ok) throw new Error(message); };
 const obj = x => x && typeof x === 'object' && !Array.isArray(x);
@@ -30,14 +33,25 @@ export const revision = dashboard => fingerprint(canonical(dashboard));
 
 export async function context({ call, companyId, siteId, dashboardId, profile = 'prod', allowCrossSite = false }) {
   assert(id(dashboardId), 'Dashboard ID required');
-  const site = await resolveSite(call, companyId, siteId);
+  // Without siteId: a company-level dashboard (no site), whose data sources may be on any site of the company.
+  const site = await resolveScope(call, companyId, siteId);
   const dashboard = (await call('GET', `/dashboards/${dashboardId}`)).data;
-  if (String(dashboard?.id) !== dashboardId || String(dashboard?.site?.id ?? dashboard?.siteId) !== siteId || String(dashboard?.type?.id) !== '3')
-    throw new Blocked('scope', 'The selected dashboard must be a next-generation dashboard in the selected site.');
-  const { inventory, crossSiteSources } = await sourceInventory(call, site, dashboard, allowCrossSite);
+  if (String(dashboard?.id) !== dashboardId || !dashboardInScope(dashboard, site) || String(dashboard?.type?.id) !== '3')
+    throw new Blocked('scope', site.kind === 'company' ? 'The selected dashboard must be a next-generation company-level dashboard of the selected company (no site). Pass --site-id for a site dashboard.' : 'The selected dashboard must be a next-generation dashboard in the selected site.');
   const ids = (dashboard.devices ?? []).map(d => String(d.id));
-  assert(ids.length <= 50 && ids.every(x => inventory.has(x)), 'Dashboard data sources must belong to this site (maximum 50).');
-  const details = await describeSources(call, ids);
+  let details, crossSiteSources = [];
+  if (site.kind === 'company') {
+    assert(ids.length <= 200, 'A company-level dashboard has at most 200 data sources here.');
+    details = await describeSources(call, ids);
+    for (const x of ids) assert(details.get(x) && String(details.get(x).companyId ?? '') === site.companyId, `Data source ${x} is not a readable data source of this company`);
+  } else {
+    let inventory;
+    ({ inventory, crossSiteSources } = await sourceInventory(call, site, dashboard, allowCrossSite));
+    assert(ids.length <= 50 && ids.every(x => inventory.has(x)), 'Dashboard data sources must belong to this site (maximum 50).');
+    details = await describeSources(call, ids);
+  }
+  // Each data source's own site, for company-level indicators.
+  const sourceSites = Object.fromEntries(ids.map(x => [x, details.get(x)?.site?.id == null ? null : String(details.get(x).site.id)]));
   const metrics = new Map();
   for (const deviceId of ids) {
     const device = details.get(deviceId);
@@ -45,10 +59,10 @@ export async function context({ call, companyId, siteId, dashboardId, profile = 
     for (const m of metricList(device).filter(m => !m.internal)) {
       const raw = device.meterSchema.metrics.find(x => String(x.metric?.id ?? x.metricId) === m.id);
       const prior = metrics.get(m.id);
-      metrics.set(m.id, { ...m, keyName: raw?.metric?.keyName ?? raw?.keyName ?? raw?.metric?.name ?? null, alias: `m${m.id}`, deviceIds: [...(prior?.deviceIds ?? []), deviceId], allowedValues: raw?.validationFormula?.allowedValues ?? null });
+      metrics.set(m.id, { ...m, keyName: raw?.metric?.keyName ?? raw?.keyName ?? raw?.metric?.name ?? null, alias: `m${m.id}`, deviceIds: [...(prior?.deviceIds ?? []), deviceId], allowedValues: raw?.validationFormula?.allowedValues ?? null, vlookupConfigs:{...prior?.vlookupConfigs,[deviceId]:raw?.validationFormula?.vlookupConfig ?? null} });
     }
   }
-  return { kind: 'dashboard-widget-context', profile, site, dashboard, revision: revision(dashboard), url: link(profile, `/dashboards/${dashboardId}`), metrics: [...metrics.values()], dimensions: DIMENSIONS, chartTypes: CHARTS, supportedTypes: Object.keys(TYPES), aiSummarySources: (dashboard.widgets ?? []).filter(w => String(w.type?.id) === '15').map(w => ({ id:String(w.id), name:w.name })), answerStyles:ANSWER_STYLES,
+  return { kind: 'dashboard-widget-context', profile, site, scope: site.kind, sourceSites, dashboard, revision: revision(dashboard), url: link(profile, `/dashboards/${dashboardId}`), metrics: [...metrics.values()], dimensions: DIMENSIONS, chartTypes: CHARTS, supportedTypes: Object.keys(TYPES), aiSummarySources: (dashboard.widgets ?? []).filter(w => String(w.type?.id) === '15').map(w => ({ id:String(w.id), name:w.name })), answerStyles:ANSWER_STYLES,
     // Read-only cross-site context: save() never passes allowCrossSite, so it still refuses these dashboards.
     ...(allowCrossSite ? { crossSiteSources, ...(crossSiteSources.length ? { readOnly:true, note:'Some data sources of this dashboard belong to other sites (crossSiteSources). This context is for reading only: save refuses to write widgets on a dashboard with data sources outside the selected site.' } : {}) } : {}) };
 }
@@ -92,16 +106,16 @@ export function validateSpec(spec, ctx) {
   fields(spec, ['version','widgets'], 'spec'); assert(spec.version === 1, 'Spec version must be 1');
   const widgets = arr(spec.widgets, 'widgets', 20); assert(widgets.length, 'Choose at least one widget');
   const keys = new Set(), targets = new Set(), names = new Set();
-  const devices = new Set(ctx.dashboard.devices.map(d => String(d.id)));
+  const devices = new Set((ctx.dashboard.devices ?? []).map(d => String(d.id)));
   const base = new Map(ctx.metrics.map(m => [m.id, m]));
   for (const dim of [...DIMENSIONS, 'time']) base.set(dim, { dataType: dim === 'meter_name' ? 'text' : 'numeric' });
   const normalized = structuredClone(widgets);
   for (const w of normalized) {
     fields(w, ['key','type','settings','widgetId','layout'], 'widget');
     assert(typeof w.key === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(w.key) && !keys.has(w.key), 'Each widget needs a unique stable key'); keys.add(w.key);
-    if (w.layout != null) fields(w.layout, ['lg','md','sm','xs'], 'layout breakpoints');
+    if (w.layout != null) fields(w.layout, Object.keys(COLS), 'layout breakpoints');
     choice(w.type, Object.keys(TYPES), 'widget type'); fields(w.settings, FIELDS[w.type], `${w.type} settings`);
-    const s = w.settings;
+    let s = w.settings;
     string(s.name, 'name', 120); assert(s.name.trim(), 'Widget name is required');
     if (s.description != null) string(s.description, 'description', 4000);
     assert(!names.has(normalizeName(s.name)), 'Widget names in a draft must be distinct'); names.add(normalizeName(s.name));
@@ -109,7 +123,14 @@ export function validateSpec(spec, ctx) {
       assert(id(w.widgetId) && !targets.has(w.widgetId), 'Duplicate or invalid update target'); targets.add(w.widgetId);
       const old = ctx.dashboard.widgets?.find(x => String(x.id) === w.widgetId);
       assert(old && String(old.type?.id) === TYPES[w.type][0], 'Update target must belong to this dashboard and retain its type');
+      if (MODES[w.type]) assert(modeOf(old) === MODES[w.type].id, `Widget ${w.widgetId} is not ${w.type === 'custom' ? 'a Custom' : 'an Embedded'} widget; Zira does not switch an existing widget between Embedded and Custom`);
     } else assert(!(ctx.dashboard.widgets ?? []).some(x => normalizeName(x.name) === normalizeName(s.name)), `Widget name already exists: ${s.name}`);
+    if (w.type === 'indicator') {
+      const old = ctx.dashboard.widgets?.find(x => String(x.id) === w.widgetId);
+      s = w.settings = indicatorSettings(s,ctx,old?.components?.[0]?.arguments?.[0]?.filters);
+    }
+    if (w.type === 'shortcuts') shortcutSettings(s,ctx);
+    if (['dataResearch','readings','filter'].includes(w.type)) assert(devices.size,'Analytical widgets require dashboard data sources');
     const metrics = new Map(base);
     if (w.type === 'aiSummary') {
       string(s.question, 'AI summary question', 16000); assert(s.question.trim(), 'AI summary question is required');
@@ -122,10 +143,14 @@ export function validateSpec(spec, ctx) {
       assert(new Set(s.widgetIds).size === s.widgetIds.length && new Set(s.widgetKeys).size === s.widgetKeys.length, 'Duplicate AI summary source');
       for (const wid of s.widgetIds) assert(id(wid) && ctx.dashboard.widgets?.some(x => String(x.id) === wid && String(x.type?.id) === '15'), 'AI summary sources must be analytical widgets in this dashboard');
     }
-    if (w.type === 'dataResearch') {
+    if (w.type === 'embedded') { checkEmbedded(s); embeddedTarget(s, ctx); }
+    if (w.type === 'dataResearch' || w.type === 'custom') {
+      // A custom widget's metrics and meter filters come from its own data sources, on any site of the company.
+      const scope = w.type === 'custom' ? customScope(s, ctx) : { devices, metrics: ctx.metrics };
+      if (w.type === 'custom') { for (const k of [...metrics.keys()]) if (!DIMENSIONS.includes(k) && k !== 'time') metrics.delete(k); for (const m of scope.metrics) metrics.set(m.id, m); }
       choice(s.chartType, Object.keys(CHARTS), 'chartType');
       s.derivedMetrics ??= []; s.customAgg ??= []; s.groupBy ??= []; s.filters ??= [];
-      const allowed = new Set(ctx.metrics.flatMap(m => [m.alias, m.keyName].filter(Boolean)));
+      const allowed = new Set(scope.metrics.flatMap(m => [m.alias, m.keyName].filter(Boolean)));
       for (const d of arr(s.derivedMetrics, 'derivedMetrics', 30)) {
         fields(d, ['id','name','exp','dataType'], 'derived field');
         assert(/^D_?[a-fA-F0-9]{8}$/.test(d.id) && !metrics.has(d.id), 'Invalid or duplicate derived field id');
@@ -144,13 +169,13 @@ export function validateSpec(spec, ctx) {
         if (a.label != null) { assert(a.name == null || a.name === a.label, 'Use one aggregation name'); a.name = a.label; delete a.label; }
         if (a.name != null) string(a.name, 'aggregation name', 120);
         if (a.timeSeriesChartType != null) assert(['2','5'].includes(s.chartType), 'Series chart overrides are only for column/time-series widgets');
-        series(a, 'A', ids); a.filters ??= []; checkFilters(a.filters, metrics, devices);
+        series(a, 'A', ids); a.filters ??= []; checkFilters(a.filters, metrics, scope.devices);
       }
       for (const c of arr(s.customAgg, 'customAgg', 30)) {
         fields(c, ['id','name','exp','displayExp','color','hide','timeSeriesChartType','yAxis','filters'], 'custom aggregation');
         if (c.timeSeriesChartType != null) assert(['2','5'].includes(s.chartType), 'Series chart overrides are only for column/time-series widgets');
         checkExpression(c.exp, ids, 'custom expression', true); assert(c.exp === c.displayExp, 'displayExp must equal exp'); series(c, 'C', ids);
-        if (c.filters) checkFilters(c.filters, metrics, devices);
+        if (c.filters) checkFilters(c.filters, metrics, scope.devices);
       }
       for (const [key, values] of Object.entries({ sortBy:['0','1','2'], sortDirection:['1','2'], limitUnit:['1','2'], stacking:['0','1','2','3'] })) if (s[key] != null) choice(s[key], values, key);
       for (const key of ['drillDown','flatTable','multiYAxises','withGauges','withColors','isFormatTime','isCenterLabel','showInLegend']) if (s[key] != null) assert(typeof s[key] === 'boolean', `${key} must be boolean`);
@@ -161,7 +186,7 @@ export function validateSpec(spec, ctx) {
       if (s.pieColors) assert(arr(s.pieColors,'pieColors',100).every(c => /^#[0-9a-f]{6}$/i.test(c)), 'Invalid pie palette');
       if (s.colors) { fields(s.colors,['low','medium','high'],'colors'); for(const band of Object.values(s.colors)) { fields(band,['from','to','color'],'color range'); if(Object.keys(band).length) assert(Number.isFinite(Number(band.from)) && Number(band.to) >= Number(band.from) && /^#[0-9a-f]{6}$/i.test(band.color),'Invalid color range'); } }
       if (s.gaugesRange) assert(Number.isFinite(s.gaugesRange.min) && s.gaugesRange.max > s.gaugesRange.min, 'Invalid gauge range');
-      checkFilters(s.filters, metrics, devices);
+      checkFilters(s.filters, metrics, scope.devices);
     }
     if (w.type === 'readings') {
       assert(devices.has(s.device), 'Readings device must belong to dashboard');
@@ -223,7 +248,9 @@ export function seriesWarnings(widgets) {
 export function payload(w, ctx, mapping = {}) {
   const s = structuredClone(w.settings), [typeId, typeName] = TYPES[w.type];
   const old = w.widgetId ? ctx.dashboard.widgets.find(x => String(x.id) === w.widgetId) : null;
-  const base = { name: s.name, description: s.description ?? '', type: { id: typeId, name: typeName }, overrideDisplayRange: old?.overrideDisplayRange ?? null, overrideDisplayInterval: old?.overrideDisplayInterval ?? null, ...(old?.displayRangeOffset != null ? {displayRangeOffset:old.displayRangeOffset} : {}) };
+  const base = { name: s.name, description: s.description ?? old?.description ?? '', type: { id: typeId, name: typeName }, overrideDisplayRange: old?.overrideDisplayRange ?? null, overrideDisplayInterval: old?.overrideDisplayInterval ?? null, ...(old?.displayRangeOffset != null ? {displayRangeOffset:old.displayRangeOffset} : {}) };
+  if (['indicator','shortcuts'].includes(w.type)) return operationalPayload(w,ctx,base,old);
+  if (MODES[w.type]) return embeddedPayload(w,ctx,base,old);
   if (w.type === 'header') return { ...base, components: [], uiSettings: { fontSize: s.fontSize ?? 1, isCenterHeader: s.isCenterHeader ?? false, description: s.description ?? '' } };
   let component = w.type === 'dataResearch' ? { id: s.chartType, name: CHARTS[s.chartType] } : w.type === 'aiSummary' ? { id:'16', name:'List' } : { id: w.type === 'filter' ? '10' : '8', name: w.type === 'filter' ? 'Filter' : 'Forms' };
   if (w.type === 'filter') {
@@ -286,29 +313,48 @@ export const argumentDevice = widget => {
 
 export function layoutFor(widgets, dashboard, mapping) {
   const result = structuredClone(dashboard.configurationLayout ?? {});
-  for (const [bp, cols] of Object.entries({ lg:12, md:12, sm:6, xs:2 })) {
-    const rows = result[bp] ??= [];
-    let y = Math.max(0, ...rows.map(r => r.y + r.h)), x = 0, rowHeight = 0;
-    for (const w of widgets) {
-      const wid = mapping[w.key].id;
-      if (w.widgetId && !w.layout?.[bp]) continue;
-      const oldIndex = rows.findIndex(r => r.i === wid);
-      let box = w.layout?.[bp];
-      if (!box) {
-        const kpi = w.type === 'dataResearch' && w.settings.chartType === '6';
-        const width = Math.min(cols, w.type === 'header' ? cols : kpi ? 3 : 6), height = ['header','filter'].includes(w.type) ? 2 : kpi ? 4 : 7;
-        if (x + width > cols) { y += rowHeight; x = 0; rowHeight = 0; }
-        box = { x, y, w:width, h:height }; x += width; rowHeight = Math.max(rowHeight, height);
-      }
-      fields(box, ['x','y','w','h'], 'layout');
-      assert(['x','y','w','h'].every(k => Number.isInteger(box[k])) && box.x >= 0 && box.y >= 0 && box.w > 0 && box.h > 0 && box.x + box.w <= cols, `Invalid layout at ${bp}`);
-      const item = { i: wid, ...box };
-      assert(!rows.some((r, n) => n !== oldIndex && item.x < r.x + r.w && item.x + item.w > r.x && item.y < r.y + r.h && item.y + item.h > r.y), `Layout overlap at ${bp}`);
-      if (oldIndex >= 0) rows[oldIndex] = item; else rows.push(item);
-    }
+  // A settings-only batch must neither rewrite nor validate unrelated legacy layouts.
+  if (widgets.every(w => w.widgetId && !Object.keys(w.layout ?? {}).length)) return result;
+  const widgetIds = new Set([...(dashboard.widgets ?? []).map(w => String(w.id)), ...Object.values(mapping).map(w => String(w.id))]);
+  // Preserve every stored field except the known transient UI flag; unknown fields stop the
+  // preview instead of being silently discarded. Validate the complete wire payload up front.
+  for (const rows of Object.values(result)) if (Array.isArray(rows)) for (const row of rows) {
+    delete row.moved;
+    row.i = String(row.i);
   }
-  return result;
+  const breakpoints = ['lg','md','sm','xs', ...('xxs' in result || widgets.some(w => w.layout?.xxs) ? ['xxs'] : [])];
+  for (const bp of breakpoints) {
+    const cols = COLS[bp], rows = result[bp] ??= [];
+    assert(Array.isArray(rows), `Invalid layout rows at ${bp}`);
+    // Remove ALL moving rows first. Otherwise a valid swap collides with the other widget's
+    // old position, and a later explicit placement can collide with earlier auto-placement.
+    const moving = widgets.filter(w => !w.widgetId || w.layout?.[bp]);
+    const movingIds = new Set(moving.map(w => mapping[w.key].id));
+    const stationary = rows.filter(r => !movingIds.has(r.i));
+    const replacements = new Map();
+    for (const w of moving.filter(w => w.layout?.[bp])) {
+      const box = w.layout[bp]; fields(box, ['x','y','w','h'], 'layout');
+      assert(['x','y','w','h'].every(k => Number.isFinite(box[k])) && box.x >= 0 && box.y >= 0 && box.w > 0 && box.h > 0 && box.x+box.w <= cols, `Invalid layout at ${bp}`);
+      const wid = mapping[w.key].id;
+      replacements.set(wid, { ...rows.find(r => r.i === wid), i:wid, ...box });
+    }
+    let y = Math.ceil(Math.max(0, ...[...stationary,...replacements.values()].map(r => r.y+r.h))), x = 0, rowHeight = 0;
+    for (const w of moving.filter(w => !w.layout?.[bp])) {
+      const kpi = w.type === 'indicator' || w.type === 'dataResearch' && w.settings.chartType === '6';
+      const width = Math.min(cols, w.type === 'header' ? cols : kpi ? 3 : 6), height = ['header','filter'].includes(w.type) ? 2 : kpi ? 4 : 7;
+      if (x+width > cols) { y += rowHeight; x=0; rowHeight=0; }
+      const wid = mapping[w.key].id;
+      replacements.set(wid,{i:wid,x,y,w:width,h:height}); x += width; rowHeight = Math.max(rowHeight,height);
+    }
+    const final = [...stationary,...replacements.values()];
+    for (const [wid,row] of replacements) assert(!final.some(r => r.i !== wid && overlaps(row,r)), `Layout overlap at ${bp}`);
+    // Keep original ordering and metadata for untouched widgets.
+    result[bp] = rows.map(r => replacements.get(r.i) ?? r);
+    for (const [wid,row] of replacements) if (!rows.some(r => r.i === wid)) result[bp].push(row);
+  }
+  return validateLayout(result,widgetIds);
 }
+
 function subset(actual, expected) {
   if (Array.isArray(expected)) return Array.isArray(actual) && actual.length === expected.length && expected.every((v,i) => subset(actual[i],v));
   if (obj(expected)) return obj(actual) && Object.entries(expected).every(([k,v]) => subset(actual[k],v));
@@ -323,8 +369,9 @@ export function verifyWidget(actual, expected) {
   const a = actual.components, e = expected.components;
   return Array.isArray(a) && a.length === e.length && e.every((c,i) => String(a[i].type?.id) === c.type.id &&
     a[i].arguments?.length === c.arguments.length && c.arguments.every((arg,j) =>
-      String(a[i].arguments[j].type?.id) === arg.type.id && (expected.type.id === '18'
+      String(a[i].arguments[j].type?.id) === arg.type.id && (['18','11'].includes(expected.type.id)
         ? subset(a[i].arguments[j].filters, arg.filters)
+        : expected.type.id === '7' ? subset(a[i].arguments[j].cta,arg.cta) && (arg.filters === undefined || subset(a[i].arguments[j].filters,arg.filters))
         : subset(a[i].arguments[j].nextGenWidgetSettings, arg.nextGenWidgetSettings))));
 }
 export async function author({ call, companyId, siteId, dashboardId, profile = 'prod', spec, expected, apply = false, receipts }) {
@@ -337,11 +384,26 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
     if (['pending','partial'].includes(stored?.actions?.[key]?.state)) throw new Blocked('uncertain_write', 'An earlier attempt is pending or partial. Inspect its receipt and dashboard; do not replay the batch.', { receipt: stored.actions[key], url:ctx.url });
   }
   if (expected && expected !== ctx.revision) throw new Blocked('conflict', 'Dashboard changed since the preview. Read context and review a fresh preview.');
+  // Resolve actual shortcut targets before preview. Never infer membership from a numeric ID.
+  const targetIds = [...new Set((spec.widgets ?? []).filter(w => w.type === 'shortcuts').flatMap(w => (w.settings?.shortcuts ?? []).map(s => s.dashboardId).filter(v => v != null)))];
+  assert(targetIds.length <= 50 && targetIds.every(id),'At most 50 valid shortcut dashboard targets per batch');
+  ctx.shortcutTargets = [];
+  for (const targetId of targetIds) {
+    const d = targetId === dashboardId ? ctx.dashboard : (await call('GET', `/dashboards/${targetId}`)).data;
+    // A site dashboard links within its site; a company-level dashboard to any dashboard of its company.
+    const inside = ctx.site.kind === 'company' ? String(d?.companyId ?? '') === ctx.site.companyId : dashboardInScope(d, ctx.site);
+    assert(String(d?.id) === targetId && inside && !d.isDeleted, ctx.site.kind === 'company' ? 'Shortcut dashboard must be readable in the selected company' : 'Shortcut dashboard must be readable in the selected site');
+    ctx.shortcutTargets.push({id:targetId,name:d.name});
+  }
+  // Embedded/custom references: readable, not deleted and in this dashboard's company, on any of its sites.
+  if ((spec.widgets ?? []).some(w => MODES[w?.type])) await resolveReferences(call, ctx, spec.widgets);
   const widgets = validateSpec(spec, ctx), warnings = seriesWarnings(widgets);
+  for (const w of widgets.filter(w => MODES[w.type])) warnings.push({key:w.key,code:'embedded_widget_admission',message:`Embedded/custom saves need ${EMBEDDED_PLATFORM_CHANGE}. An older backend rejects the save; retain the spec and report the gap.`});
+  for (const w of widgets.filter(w => ['indicator','shortcuts'].includes(w.type))) warnings.push({key:w.key,code:'native_widget_admission',message:'Indicator/shortcut saves require backend admission for this type and action. An older backend rejects the save; retain the spec and report the gap, do not switch to browser editing.'});
   const mapping = Object.fromEntries(widgets.map(w => [w.key, { id:w.widgetId ?? w.key, name:w.settings.name }]));
   const planned = widgets.map(w => ({ key:w.key, action:w.widgetId ? 'update' : 'create', widgetId:w.widgetId, payload:payload(w, ctx, mapping) }));
   const plannedLayout = layoutFor(widgets, ctx.dashboard, mapping);
-  const preview = { kind:'dashboard-widgets-preview', url:ctx.url, revision:ctx.revision, warnings, widgets:planned, configurationLayout:plannedLayout, notifications:false, applied:false };
+  const preview = { kind:'dashboard-widgets-preview', url:ctx.url, revision:ctx.revision, warnings, widgets:planned, configurationLayout:plannedLayout, notifications:false, browserAlerts:widgets.some(w => w.type === 'indicator' && w.settings.conditions?.some(c => c.popupAlert)), applied:false };
   if (!apply) return preview;
   assert(expected, '--expected REVISION from a reviewed preview is required with --apply');
   const outcome = await guardedWrite({ file:receipts, key, summary:{ kind:'dashboard-widgets', dashboardId, siteId, widgetCount:widgets.length }, links:() => ({ url:ctx.url }),
@@ -351,8 +413,11 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
     },
     run: async progress => {
       const savedPayloads = [];
+      // Attempt rollout-dependent native families first; an admission denial must not follow
+      // successful chart writes in the same batch. Never retry or change credential sources.
+      const operational = w => ['indicator','shortcuts','embedded','custom'].includes(w.type);
       const dependent = w => ['filter','aiSummary'].includes(w.type);
-      for (const w of [...widgets].sort((a,b) => Number(dependent(a)) - Number(dependent(b)))) {
+      for (const w of [...widgets].sort((a,b) => Number(operational(b)) - Number(operational(a)) || Number(dependent(a)) - Number(dependent(b)))) {
         const body = payload(w, ctx, mapping);
         const response = await call(w.widgetId ? 'PUT' : 'POST', w.widgetId ? `/dashboards/widgets/${w.widgetId}` : `/dashboards/${dashboardId}/widgets`, body);
         const value = response?.data;
@@ -362,7 +427,8 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
         await progress({ [w.key]:wid }); savedPayloads.push({ id:wid, body });
       }
       const configurationLayout = layoutFor(widgets, ctx.dashboard, mapping);
-      await call('PUT', `/dashboards/configuration-layout/${dashboardId}`, { configurationLayout });
+      if (JSON.stringify(canonical(configurationLayout)) !== JSON.stringify(canonical(ctx.dashboard.configurationLayout ?? {})))
+        await call('PUT', `/dashboards/configuration-layout/${dashboardId}`, { configurationLayout });
       let saved;
       try { saved = (await call('GET', `/dashboards/${dashboardId}`)).data; } catch (error) { return { verified:false, readBack:error.message, receipt:{ dashboardId, mapping } }; }
       const mismatches = savedPayloads.filter(p => !verifyWidget(saved?.widgets?.find(w => String(w.id) === p.id), p.body)).map(p => p.id);
@@ -374,12 +440,16 @@ export async function author({ call, companyId, siteId, dashboardId, profile = '
 }
 
 const HELP = `Native Zira widgets — preview by default; no deletion or device changes.
-context --company-id ID --site-id ID --dashboard-id ID [--out FILE] [--allow-cross-site]
-save --company-id ID --site-id ID --dashboard-id ID --spec FILE
+context --company-id ID [--site-id ID] --dashboard-id ID [--out FILE] [--allow-cross-site]
+save --company-id ID [--site-id ID] --dashboard-id ID --spec FILE
+Without --site-id the dashboard is a company-level dashboard (company channel's Dashboards tab, no site):
+its data sources may be on any site of the company.
   [--apply --expected REVISION] [--receipts FILE]
 Common: --profile prod|integ
 Spec: {version:1, widgets:[{key,type,settings,widgetId?,layout?}]}.
-Types: dataResearch (KPI/grouped KPI/table/column/bar/pie/time series), header, filter, readings, aiSummary.
+Types: dataResearch (KPI/grouped KPI/table/column/bar/pie/time series), header, filter, readings, aiSummary, indicator, shortcuts,
+  embedded ({name, dashboardId, sourceWidgetId}: another dashboard's chart, live, from any site of the company) and
+  custom (Data Research settings plus devices:[IDs]: a chart on data sources from any sites of the company).
 aiSummary stores a question and selected analytical widgets; it does not run AI or schedule reports.
 context reads metric schemas and saved widgets; save validates and previews exact payload/layout.
 Preview warnings (first_series_categories) flag column/bar charts that may drop categories.
@@ -394,7 +464,7 @@ async function main() {
   } });
   if (!command || command === 'help') { console.log(HELP); return; }
   assert(['context','save'].includes(command), 'Unknown command');
-  const options = { call:await liveSession(o.profile, { allow:ROUTES, maxRequests:80 }), profile:o.profile, companyId:o['company-id'], siteId:o['site-id'], dashboardId:o['dashboard-id'] };
+  const options = { call:await liveSession(o.profile, { allow:ROUTES, maxRequests:160 }), profile:o.profile, companyId:o['company-id'], siteId:o['site-id'], dashboardId:o['dashboard-id'] };
   let result;
   assert(command === 'context' || !o['allow-cross-site'], '--allow-cross-site is for context (read-only); save requires every data source to belong to the site');
   if (command === 'context') result = await context({ ...options, allowCrossSite:!!o['allow-cross-site'] });
@@ -402,7 +472,7 @@ async function main() {
     assert(o.spec, '--spec required'); const raw = await readFile(o.spec, 'utf8'); assert(raw.length <= 256*1024, 'Spec exceeds 256 KiB');
     result = await author({ ...options, spec:JSON.parse(raw), apply:!!o.apply, expected:o.expected, receipts:receiptsFile(o.receipts) });
   }
-  if (o.out) { await writeFile(o.out, JSON.stringify(result,null,2), { mode:0o600 }); return { kind:result.kind, out:o.out, revision:result.revision, url:result.url, state:result.state, applied:result.applied, verified:result.verified, complete:result.complete, warnings:result.warnings }; }
+  if (o.out) { await writeFile(o.out, JSON.stringify(result,null,2), { mode:0o600 }); return { kind:result.kind, out:o.out, revision:result.revision, url:result.url, state:result.state, applied:result.applied, verified:result.verified, complete:result.complete, warnings:result.warnings, browserAlerts:result.browserAlerts }; }
   return result;
 }
 if (isMain(import.meta)) runCli(main, { profile:() => process.argv.includes('integ') ? 'integ' : 'prod' });

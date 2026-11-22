@@ -1,7 +1,8 @@
 {
-  "version": "0.3.51-preview.34",
+  "version": "0.3.51-preview.39",
   "notes": [
-    "Zira now updates itself in Claude Code: a new version installs in the background when you start a session and is ready in the next one.",
-    "To switch that off, say \"stop updating Zira automatically\". In Codex, say \"update Zira\" when you see the notice."
+    "Company dashboards: build, change, copy, share and delete the dashboards on a company's Dashboards tab from chat, with charts across all of the company's sites.",
+    "Fast company totals: set up a Zira aggregator that rolls every machine up per site day, so a company dashboard loads in seconds.",
+    "Dashboards can also show another dashboard's chart, or a chart on data sources picked from several sites."
   ]
 }

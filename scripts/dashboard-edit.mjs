@@ -4,9 +4,10 @@
 // nothing else. Also plans what a cross-site copy must relink: shortcut targets, filter targets,
 // camera/live-count tiles and every breakpoint's layout.
 import {
-  Blocked, ZiraApiError, fingerprint, guardedWrite, id, link, listAll, normalizeName, resolveSite,
-  siteDataSources, text,
+  Blocked, ZiraApiError, dashboardInScope, fingerprint, guardedWrite, id, link, listAll, normalizeName, resolveScope, resolveSite,
+  scopeDashboards, siteDataSources, text,
 } from "./client.mjs";
+import { COLS, ROW_KEYS, cleanRow, overlaps } from "./dashboard-layout.mjs";
 import { resaveBody } from "./dashboard-widgets.mjs";
 
 // The platform change that admits dashboard settings, site day start and shortcut/camera/live-count
@@ -30,9 +31,7 @@ const INTERVAL_IDS = {
 export const KINDS = { "6": "header", "15": "chart", "17": "readings", "18": "aiSummary", "20": "filter", "7": "shortcut", "21": "camera", "22": "liveCount" };
 // Widget types the agent widget guard accepted before the platform change.
 const GUARDED = new Set(["6", "15", "17", "20"]);
-const ROUND_TRIP = new Set(["7", "21", "22"]);
-const COLS = { lg: 12, md: 12, sm: 6, xs: 2, xxs: 2 };
-const ROW_KEYS = ["i", "x", "y", "w", "h", "minW", "minH", "maxW", "maxH", "static", "isDraggable", "isResizable", "resizeHandles", "isBounded"];
+const ROUND_TRIP = new Set(["7", "19", "21", "22"]);
 const DASHBOARD_KEYS = ["name", "description", "isShared", "isLocked", "isPrivate", "lazyLoading", "range", "interval"];
 const WIDGET_KEYS = ["widgetId", "name", "description", "filterTargets", "shortcuts", "deviceId", "rotation", "primaryMetric"];
 const FIELD_TYPES = { filterTargets: ["20"], shortcuts: ["7"], deviceId: ["21", "22"], rotation: ["21"], primaryMetric: ["22"] };
@@ -239,8 +238,6 @@ function widgetBodyOf(edited) {
 
 // ---- Layout ----
 
-const cleanRow = row => Object.fromEntries(ROW_KEYS.filter(k => row[k] !== undefined).map(k => [k, k === "i" ? String(row[k]) : row[k]]));
-const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 const order = rows => [...rows].sort((a, b) => a.y - b.y || a.x - b.x);
 
 // Place rows in reading order, moving each down past anything it would cover.
@@ -310,7 +307,7 @@ export function planLayout(dashboard, layoutChanges = {}, copyLayout) {
     const seen = new Set();
     for (const r of rows) {
       assert(!seen.has(r.i), `Widget ${r.i} appears twice in layout.${bp}`); seen.add(r.i);
-      assert(["x", "y", "w", "h"].every(k => Number.isInteger(r[k])) && r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 && r.x + r.w <= COLS[bp],
+      assert(["x", "y", "w", "h"].every(k => Number.isFinite(r[k])) && r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 && r.x + r.w <= COLS[bp],
         `Layout row ${r.i} does not fit the ${COLS[bp]}-column ${bp} grid${bp === "lg" ? "" : `; if Zira saved ${bp} as an unpositioned pile, add "copyLayout": {"from": "lg", "to": ["${bp}"]} to lay it out from desktop`}`);
     }
   }
@@ -439,13 +436,14 @@ const describeWrite = w => ({ kind: w.kind, target: w.target, ...(w.widget ? { w
 export async function loadDashboard(call, site, dashboardId) {
   assert(id(String(dashboardId ?? "")), "Dashboard ID required");
   const d = (await call("GET", `/dashboards/${dashboardId}`)).data ?? {};
-  if (String(d.id ?? "") !== String(dashboardId) || String(d.site?.id ?? d.siteId ?? "") !== site.id)
-    throw new Blocked("scope", `Dashboard ${dashboardId} is not a dashboard of ${site.name} that this user can see`);
+  if (String(d.id ?? "") !== String(dashboardId) || !dashboardInScope(d, site))
+    throw new Blocked("scope", `Dashboard ${dashboardId} is not a ${site.kind === "company" ? "company-level dashboard" : "dashboard"} of ${site.name} that this user can see`);
   if (String(d.type?.id ?? "") !== "3") throw new Blocked("scope", "Only next-generation dashboards are edited here.");
   return d;
 }
 
-export const siteDashboardList = (call, site) => listAll(call, "/dashboards/list", { siteIds: site.id, dashboardTypeIds: "3" });
+// A site's dashboards, or a company's company-level dashboards for a company scope (resolveScope).
+export const siteDashboardList = (call, site) => scopeDashboards(call, site);
 
 // Apply a planned set of writes once, under one receipt, then read the dashboard back.
 export async function applyWrites({ call, dashboardId, before, writes, receipts, key, summary, precheck }) {
@@ -480,13 +478,15 @@ export async function applyWrites({ call, dashboardId, before, writes, receipts,
 }
 
 export async function editDashboard({ call, profile = "prod", companyId, siteId, dashboardId, spec, expected, apply = false, skipPlatform = false, receipts }) {
-  const site = await resolveSite(call, companyId, siteId);
+  const site = await resolveScope(call, companyId, siteId);
   const dashboard = await loadDashboard(call, site, dashboardId);
   validateEditSpec(spec);
   const needsDevices = (spec.widgets ?? []).some(w => w.deviceId !== undefined);
   const needsDashboards = (spec.widgets ?? []).some(w => w.shortcuts) || spec.dashboard?.name !== undefined;
   const siteDashboards = needsDashboards ? await siteDashboardList(call, site) : [];
-  const siteDeviceIds = needsDevices ? new Set((await siteDataSources(call, site)).map(d => String(d.id))) : new Set();
+  // A company-level dashboard's tiles use its own attached data sources, which may be on any site of the company.
+  const siteDeviceIds = !needsDevices ? new Set() : site.kind === "company" ? new Set((dashboard.devices ?? []).map(d => String(d.id)))
+    : new Set((await siteDataSources(call, site)).map(d => String(d.id)));
   const planned = planEdit({ spec, dashboard, siteDashboards, siteDeviceIds });
   const deferred = skipPlatform ? planned.writes.filter(w => w.needsPlatform) : [];
   const plan = { ...planned, writes: planned.writes.filter(w => !deferred.includes(w)) };

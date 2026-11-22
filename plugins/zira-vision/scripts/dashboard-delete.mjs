@@ -6,7 +6,7 @@
 // A delete cannot be undone from here: the backup is the record to rebuild from, not an undo.
 import path from "node:path";
 import {
-  Blocked, ZiraApiError, definiteFailure, explain, fingerprint, guardedWrite, id, idList, link, normalizeName, resolveSite,
+  Blocked, ZiraApiError, definiteFailure, explain, fingerprint, guardedWrite, id, idList, link, normalizeName, resolveScope, resolveSite,
 } from "./client.mjs";
 import {
   KINDS, diffPaths, layoutChanges, loadDashboard, normalizeWidget, notEnabled, planLayout, revision, siteDashboardList, verifyWrites,
@@ -276,7 +276,7 @@ const lockedStop = (dashboard, allowLocked, what) => {
 
 export async function deleteWidgets({ call, profile = "prod", companyId, siteId, dashboardId, widgetIds, widgetNames, unlink = false, keepLayout = false,
   allowLocked = false, expected, apply = false, backupDir, receipts, resolve, now = () => new Date() }) {
-  const site = await resolveSite(call, companyId, siteId);
+  const site = await resolveScope(call, companyId, siteId);
   const dashboard = await loadDashboard(call, site, dashboardId);
   lockedStop(dashboard, allowLocked, "its widgets");
   const plan = planDeleteWidgets({ dashboard, widgetIds, widgetNames, unlink: !!unlink, keepLayout: !!keepLayout });
@@ -391,7 +391,7 @@ async function dashboardGone(call, site, dashboardId) {
 
 export async function deleteDashboard({ call, profile = "prod", companyId, siteId, dashboardId, allowLinked = false, allowLocked = false, expected, apply = false,
   backupDir, receipts, resolve, now = () => new Date() }) {
-  const site = await resolveSite(call, companyId, siteId);
+  const site = await resolveScope(call, companyId, siteId);
   const dashboard = await loadDashboard(call, site, dashboardId);
   lockedStop(dashboard, allowLocked, "it");
   const url = link(profile, `/dashboards/${dashboard.id}`), rev = revision(dashboard);

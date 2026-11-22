@@ -1,10 +1,12 @@
 # Other widget families and settings
 
-Use this reference to choose an appropriate family and explain its capabilities. The native helper currently saves analytical widgets, headers, filters and readings tables (see native-widgets.md). The following operational families require Zira's editor; do not send them through an unvalidated raw payload escape hatch or imply they were created. Their web AI support differs from the plugin helper's support.
+Use this reference to choose an appropriate family and explain its capabilities. The native helper saves analytical widgets, headers, filters, readings tables, AI summaries, indicators and shortcuts (see native-widgets.md and [operational widgets](operational-widgets.md)). Other operational families require Zira's editor; do not send them through an unvalidated raw payload escape hatch or imply they were created. Their web AI support differs from the plugin helper's support.
 
 Source contract: Zira web widget editors and `src/ai/dashboards/widgets/*`, inspected 2026-10-14. UI-only fields can exceed the web AI schema. Use live editor controls as the authority if they differ; never infer missing IDs from another site.
 
 ## Indicator (type 11) and Live Data (type 22)
+
+Use `dashboard_widgets` with `type: "indicator"` for last-reading indicators; see [the validated contract](operational-widgets.md). Type 11 uses `filters`, while type 22 uses `nextGenWidgetSettings`. They are different widgets. The existing `dashboards edit` flow handles the documented live-count field edits; creating Live Data is outside the indicator contract.
 
 An Indicator shows latest saved readings; Live Data shows the device's live messages and requires a compatible source. A live message metric is not necessarily a historical meter-schema metric. Discover the appropriate metric catalog and freshness.
 
@@ -32,10 +34,10 @@ Statistics: `groupByValue` (`task_status_id|task_priority_id|assignee_id|system_
 
 ## Shortcuts (7), Feed (14), embedded/custom (19)
 
-Shortcuts: `name,description,hideHeader,shortcuts:[{title,description,targetKey,displayModeId}]`. `targetKey` resolves to an actual dashboard/form/document/web destination in context; the persisted call-to-action envelope is not a Data Research setting. Links don't execute the destination workflow.
+Use `dashboard_widgets` with `type: "shortcuts"` to create or replace ordered dashboard/HTTP(S) links, including adding/removing/reordering individual links; see [the validated contract](operational-widgets.md). Forms and documents remain outside that contract. The web AI schema instead uses `name,description,hideHeader,shortcuts:[{title,description,targetKey,displayModeId}]`. `targetKey` resolves to an actual dashboard/form/document/web destination in context; the persisted call-to-action envelope is not a Data Research setting. Links don't execute the destination workflow.
 
 Feed: choose an accessible channel and filters for alerts, reports, people, tasks and hashtags. The editor stores feed-specific filters; don't reuse reading metric/operator IDs. A feed view does not post a message or subscribe recipients.
 
 AI Insights (18) is covered by the helper's `aiSummary` family. Read [AI summary settings and payload](ai-summary.md) for source selection, the distinct `filters` envelope and backend/transport prerequisites. Do not route it to the web editor as an unsupported family.
 
-Embedded/custom: embedded reuses an existing allowed view; custom configures a local variant. Data Research component IDs 8/9 are embedded modes, not standard analytics chart types. These modes are not arbitrary HTML/JavaScript execution and are excluded from the native helper's allowlist. Prefer a native expression/chart when it can answer the question; otherwise use the supported web editor flow and state the limitation.
+Embedded/custom (type 19): the helper supports both modes as `embedded` and `custom`. Read [company-level dashboards](company-dashboards.md). Data Research component IDs 8/9 are these modes, not standard analytics chart types. They are not arbitrary HTML/JavaScript execution. Prefer a native `dataResearch` widget when the dashboard's own site sources answer the question; use `custom` when a chart needs data sources from several sites, and `embedded` to reuse a chart that already exists on another dashboard.

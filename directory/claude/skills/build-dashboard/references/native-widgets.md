@@ -183,3 +183,9 @@ The web editor supports more than scalar ratios. Keep these as `customAgg`, pres
 | `formatNumberToDuration(number,'seconds',format)` | Format a numeric duration |
 
 `dashboardFromDate`, `dashboardToDate`, `interval` (seconds), and `t` (one-based grouped point index in scalar context) are calculation-context variables. They are not row-level metric aliases. `now()` changes as the chart recalculates; use a fixed window for reproducible acceptance. The helper validates names/references, not the whole mathJS language or mathematical meaning. The browser/data comparison remains mandatory for a new complex formula.
+
+## Indicators, shortcuts and layout repairs
+
+`indicator` and `shortcuts` use [their native contracts](operational-widgets.md), not Data Research settings. Use the same `dashboard_widgets` context/preview/apply workflow. Indicators support partial settings edits with preserved rules; shortcuts take a complete ordered list.
+
+Settings-only batches preserve the layout byte for byte and send no layout write. Adding/moving widgets validates every outgoing breakpoint before the first widget write, strips only the transient `moved` flag, preserves fractional saved sizes and existing row metadata, and checks batch moves against final positions. An invalid existing phone grid stops the preview. Repair it with `dashboards edit` and a reviewed `copyLayout`/layout spec, then refresh context; no browser editing is needed. `xxs`, when already present or explicitly requested, is maintained too. Unrelated existing overlaps are preserved; newly introduced overlaps are rejected.

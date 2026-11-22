@@ -198,6 +198,26 @@ export async function resolveSite(call, companyId, siteId) {
   };
 }
 
+// A dashboard scope: a site (--site-id) or, without a site, the company itself. Company-level dashboards (Zira
+// web's company channel Dashboards tab) have no site and a company; they may attach data sources from any site
+// of the company. The returned object keeps the resolveSite shape (id is null for a company).
+export async function resolveScope(call, companyId, siteId) {
+  if (siteId != null && siteId !== "") return { kind: "site", ...(await resolveSite(call, companyId, String(siteId))) };
+  if (!id(companyId)) throw new Error("Company ID required");
+  const rows = (await listAll(call, "/sites/list", { companyIds: companyId })).filter(s => !s.isDeleted && String(s.company?.id ?? s.companyId ?? "") === companyId);
+  if (!rows.length) throw new Blocked("scope", "This user has no authorized site in the selected company");
+  const companyName = rows.map(s => s.company?.name).find(n => typeof n === "string" && n.trim());
+  return { kind: "company", id: null, name: String(companyName ?? `Company ${companyId}`), companyId, channelId: null, siteIds: rows.map(s => String(s.id)) };
+}
+// Whether a dashboard belongs to a scope: the site's own dashboards, or the company's dashboards without a site.
+export const dashboardInScope = (d, scope) => scope?.kind === "company"
+  ? (d?.site?.id ?? d?.siteId) == null && String(d?.companyId ?? d?.company?.id ?? "") === scope.companyId
+  : String(d?.site?.id ?? d?.siteId ?? "") === String(scope?.id ?? "");
+// Next-generation dashboards of a scope (a site's, or the company-level ones).
+export const scopeDashboards = async (call, scope) => scope?.kind === "company"
+  ? (await listAll(call, "/dashboards/list", { companyIds: scope.companyId, dashboardTypeIds: "3" })).filter(d => dashboardInScope(d, scope))
+  : listAll(call, "/dashboards/list", { siteIds: scope.id, dashboardTypeIds: "3" });
+
 // The site's system (used to attach new data sources) lives on its channel context.
 export async function siteSystem(call, site) {
   if (!site.channelId) return null;

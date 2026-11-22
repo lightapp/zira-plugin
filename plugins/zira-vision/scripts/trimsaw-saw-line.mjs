@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The saw-line gate for every trimsaw calibration. A trimsaw camera measures a board as
 // size = (saw - stop end) * scale, so the saw position its stops imply must sit where the cut board
-// ends really are. Stop labels can agree with each other and still be wrong: on Kamps Mulberry
+// ends really are. Stop labels can agree with each other and still be wrong: on one customer's
 // Trimsaw 1 (11/13) stops labelled from a stale saw (243.1 frame px, real cut ends at about 248.5) read
 // every board about 2 in. short while the size reports said PASSED. So nothing is applied, assigned,
 // recorded or reported as passed until this check has measured the cut ends on a real recording, drawn

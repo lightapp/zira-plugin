@@ -115,7 +115,7 @@ every recording. When the view moved, every edge in the overlay shows the same r
 the same direction. The shift's sign follows the frame's stop axis; the reading change says what it
 does to lengths (negative reads shorter).
 
-**A view move is a reason to check the readings, not proof.** The snapshots come from the raw recording. At Kamps Mulberry on 2026-10-22 the recorded view moved 2.1 px between 07:00 and 10:00 while every stop read the same at both times, and the readings swung within half an hour in opposite directions (one stop long while another read short), which no shift, turn or zoom of the camera can do. Recordings minutes apart matched within 0.05 px, so the snapshot measurement itself was sound.
+**A view move is a reason to check the readings, not proof.** The snapshots come from the raw recording. At one customer site the recorded view moved 2.1 px between 07:00 and 10:00 while every stop read the same at both times, and the readings swung within half an hour in opposite directions (one stop long while another read short), which no shift, turn or zoom of the camera can do. Recordings minutes apart matched within 0.05 px, so the snapshot measurement itself was sound.
 
 **The camera's own "camera moved" status is not this check.** It comes from the phone's tilt
 sensors: pitch or roll more than 2 degrees away from a stored reference, held for 5 minutes. Its

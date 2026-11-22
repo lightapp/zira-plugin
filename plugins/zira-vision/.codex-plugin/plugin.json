@@ -1,6 +1,6 @@
 {
   "name": "zira-vision",
-  "version": "0.3.51-preview.39",
+  "version": "0.3.51-preview.40",
   "description": "AI vision tools for Zira: evaluate a model on your images, review rare defects and prepare training data. Add it next to the Zira plugin.",
   "author": {
     "name": "Zira",

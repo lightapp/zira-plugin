@@ -1,6 +1,6 @@
 // Shared band saw board-inspection rollout logic: the board fields, the site done criteria, the shared
 // definitions (48x40 shape, pallet mix, stills per pallet) and the Scale and crop fits, used by
-// setup-bandsaw-site, validate-bandsaw-site and project-kamps-bandsaw-rollout. Pure functions plus one
+// setup-bandsaw-site, validate-bandsaw-site and the internal band saw rollout project skill. Pure functions plus one
 // readings loader over the readings-report cache; nothing here writes to Zira or a camera.
 import os from "node:os";
 import path from "node:path";

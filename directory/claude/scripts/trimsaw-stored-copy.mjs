@@ -1,5 +1,5 @@
 // Zira's stored copy of a trimsaw camera's settings (the data source's cv.settings) against the camera's
-// own retained trim saw status. Push uploaded stops, the Kamps rollout snapshot and a replacement phone's
+// own retained trim saw status. Push uploaded stops, a rollout snapshot and a replacement phone's
 // Sync Settings read this copy, so a copy that lags the camera hands out the wrong stops.
 // Read-only: nothing here writes to Zira or the camera. The camera writes its own copy (Vision-App after
 // 851, meta.settingsUploadSupported) when someone presses Upload settings in Zira's Trim saw stops panel.

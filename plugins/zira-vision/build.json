@@ -1,14 +1,13 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.51-preview.41",
+  "version": "0.3.51-preview.42",
   "channel": "preview",
   "audience": "public",
   "updateChecks": true,
   "updateNotes": [
-    "Dashboards: charts over time now group by Auto, so the time axis shows readable dates (Nov 18) instead of raw timestamps, and the preview warns about a chart grouped by the raw timestamp.",
-    "Company dashboards: guidance for simple count tiles such as the number of sites and machines reporting."
+    "Camera settings from chat: band saw cameras accept the newer photo and count settings of the Vision app (internal preview skill)."
   ],
-  "sourceCommit": "32bcd3c426781a36a3f8c2904e11c5fe3eb1764d",
+  "sourceCommit": "8412c7b8eefb06d176c0a6646aaf96e86b25febc",
   "sourceDirty": false,
   "plugin": "zira-vision",
   "tools": [

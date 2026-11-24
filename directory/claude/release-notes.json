@@ -1,7 +1,6 @@
 {
-  "version": "0.3.51-preview.41",
+  "version": "0.3.51-preview.42",
   "notes": [
-    "Dashboards: charts over time now group by Auto, so the time axis shows readable dates (Nov 18) instead of raw timestamps, and the preview warns about a chart grouped by the raw timestamp.",
-    "Company dashboards: guidance for simple count tiles such as the number of sites and machines reporting."
+    "Camera settings from chat: band saw cameras accept the newer photo and count settings of the Vision app (internal preview skill)."
   ]
 }

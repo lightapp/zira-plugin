@@ -28,7 +28,7 @@ import { RAW_VIDEO_ROUTES, confirmDownload, downloadRawVideos, listOrExplain, pa
 const HELP = `Trimsaw saw-line check: is the camera's saw line on the saw? (a gate for every calibration)
 node scripts/trimsaw-saw-line.mjs check --device-id ID [--identity ID] [--proposed-saw-px PX] [--saw-px PX]
     [--from DAY] [--to DAY] [--clip FILE] [--at 2] [--seconds 8] [--fps 4] [--search-px 15] [--tolerance-px 1]
-    [--frame-size 320] [--windows 3] [--out DIR] [--confirm] [--profile prod|integ]
+    [--frame-size 320] [--resize CROP|BOX|STRETCH] [--windows 3] [--out DIR] [--confirm] [--profile prod|integ]
 node scripts/trimsaw-saw-line.mjs check --status FILE --video FILE --data-source-id ID [same options]
 node scripts/trimsaw-saw-line.mjs check --from-record FILE --proposed-saw-px PX [--out DIR]
 node scripts/trimsaw-saw-line.mjs check ... --cut-ends-px PX   (only when detection is undetermined: read off the picture)
@@ -37,7 +37,9 @@ node scripts/trimsaw-saw-line.mjs require --record FILE --device-id ID [--saw-px
 
 check reads the camera's trim saw status (applied stops, saw, side) and its newest raw recording from
 Zira (read-only; --clip picks one), takes --seconds of frames, measures where the cut board ends sit and
-compares them with the saw (--windows windows of the clip must agree within a frame px, else undetermined): the camera's current one, or --proposed-saw-px (the saw of a mapping,
+compares them with the saw. Frames are first resized (the camera's ResizeMethod: CROP, BOX letterbox) and
+rotated (analysisRotationDegrees) exactly as the camera builds its analysis frame, so the lines are drawn
+and the ends measured in the camera's own frame px (--windows windows of the clip must agree within a frame px, else undetermined): the camera's current one, or --proposed-saw-px (the saw of a mapping,
 a line-edit preview or a calibration preview). It writes record.json, overlay.png (red: the saw being
 judged, magenta: the camera's current saw when another is judged, green: where the cut ends are,
 yellow: the stops) and overlay-zoom.png under --out. Verdict pass within --tolerance-px frame px
@@ -123,12 +125,77 @@ export function cameraGeometry(meta) {
 
 // ---------- frame <-> raw video ----------
 
-// Frame coordinates (a screen-width square of side FrameSize centred on the image, filling its height):
-// x = (u - W/2) * FS/H + FS/2, y = v * FS/H. Positions along the board axis are one of the two.
-export function frameToRaw(p, { axis, frameSize, width, height }) {
+// How the camera turns a decoded (orientation-normalised) video frame into its square analysis frame,
+// exactly as Vision-App's TrimSawEdgeMapping / ImageProcessingUtility.renderCropResizeAndMask do it:
+// ResizeMethod CROP centre-crops the square and fills the frame, BOX fits the whole frame inside it
+// (letterbox, black bars), anything else stretches the whole frame; then the picture is rotated
+// `rotation` degrees clockwise about the frame centre (analysisRotationDegrees). On a 270° camera
+// recorded 640x360 with a -90° display matrix the decoded frame is 360x640; BOX into 320 and rotate 270
+// gives analysis y = 250 - u/2: the stops and saw run along the chains, not across them.
+export function analysisMapping({ width, height, frameSize, resize = "CROP", rotation = 0 }) {
+  if (!(width > 0 && height > 0 && frameSize > 0)) throw new Error("Invalid frame for the analysis mapping");
+  const rot = ((Math.round(Number(rotation) || 0) % 360) + 360) % 360, method = String(resize ?? "").toUpperCase();
+  const crop = method === "CROP", box = method === "BOX", side = Math.min(width, height);
+  const sL = crop ? Math.trunc((width - side) / 2) : 0, sT = crop ? Math.trunc((height - side) / 2) : 0;
+  const sR = crop ? sL + side : width, sB = crop ? sT + side : height;
+  const scale = Math.min(frameSize / width, frameSize / height);
+  const drawW = box ? Math.round(width * scale) : frameSize, drawH = box ? Math.round(height * scale) : frameSize;
+  const dL = Math.trunc((frameSize - drawW) / 2), dT = Math.trunc((frameSize - drawH) / 2);
+  const kx = (sR - sL) / drawW, ky = (sB - sT) / drawH, centre = frameSize / 2;
+  const exact = v => (Math.abs(v - Math.round(v)) < 1e-12 ? Math.round(v) : v);
+  const ang = -rot * Math.PI / 180, cos = exact(Math.cos(ang)), sin = exact(Math.sin(ang));
+  return {
+    width, height, frameSize, resize: crop ? "CROP" : box ? "BOX" : "STRETCH", rotation: rot,
+    sourcePerFramePx: Math.min(kx, ky),
+    // Analysis-frame point -> decoded video pixel coordinates.
+    toSource(x, y) {
+      const dx = x - centre, dy = y - centre;
+      const ux = centre + cos * dx - sin * dy, uy = centre + sin * dx + cos * dy;
+      return [sL + (ux - dL) * kx, sT + (uy - dT) * ky];
+    },
+  };
+}
+
+// Renders decoded frames (gray, or rgb with channels 3) into the analysis frame at `k` output px per
+// frame px, with bilinear sampling; outside the source is black, like the camera's letterbox.
+export function analysisRenderer(mapping, k = Math.max(1, mapping.sourcePerFramePx)) {
+  const size = Math.max(1, Math.round(mapping.frameSize * k)), kk = size / mapping.frameSize;
+  const { width: W, height: H } = mapping, n = size * size;
+  const idx = new Int32Array(n * 4), wt = new Float32Array(n * 4);
+  for (let Y = 0; Y < size; Y++) for (let X = 0; X < size; X++) {
+    const [u, v] = mapping.toSource((X + 0.5) / kk, (Y + 0.5) / kk), o = (Y * size + X) * 4;
+    const fx = u - 0.5, fy = v - 0.5;
+    if (!(fx > -0.5 && fy > -0.5 && fx < W - 0.5 && fy < H - 0.5)) { idx.fill(-1, o, o + 4); continue; }
+    const x0 = Math.max(0, Math.floor(fx)), y0 = Math.max(0, Math.floor(fy)), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
+    const ax = Math.min(1, Math.max(0, fx - x0)), ay = Math.min(1, Math.max(0, fy - y0));
+    idx[o] = y0 * W + x0; idx[o + 1] = y0 * W + x1; idx[o + 2] = y1 * W + x0; idx[o + 3] = y1 * W + x1;
+    wt[o] = (1 - ax) * (1 - ay); wt[o + 1] = ax * (1 - ay); wt[o + 2] = (1 - ax) * ay; wt[o + 3] = ax * ay;
+  }
+  const render = (src, channels = 1) => {
+    const out = new Uint8Array(n * channels);
+    for (let p = 0; p < n; p++) {
+      const o = p * 4;
+      if (idx[o] < 0) continue;
+      for (let ch = 0; ch < channels; ch++) {
+        const v = src[idx[o] * channels + ch] * wt[o] + src[idx[o + 1] * channels + ch] * wt[o + 1]
+          + src[idx[o + 2] * channels + ch] * wt[o + 2] + src[idx[o + 3] * channels + ch] * wt[o + 3];
+        out[p * channels + ch] = Math.round(v);
+      }
+    }
+    return out;
+  };
+  return { size, scale: kk, render };
+}
+
+// Positions along the board axis in the picture the lines are drawn on. A picture rendered in the
+// analysis frame (`scale` px per frame px, every current record) is plain scaling. Older records drew on
+// the decoded video: a screen-width square of side FrameSize centred on the image, filling its height.
+export function frameToRaw(p, { axis, frameSize, width, height, scale }) {
+  if (scale) return p * scale;
   return axis === "x" ? (p - frameSize / 2) * height / frameSize + width / 2 : p * height / frameSize;
 }
-export function rawToFrame(a, { axis, frameSize, width, height }) {
+export function rawToFrame(a, { axis, frameSize, width, height, scale }) {
+  if (scale) return a / scale;
   return axis === "x" ? (a - width / 2) * frameSize / height + frameSize / 2 : a * frameSize / height;
 }
 
@@ -371,12 +438,13 @@ export function pngSize(buf) {
 // The judged saw (red), the camera's current saw when another is judged (magenta, dashed), the measured
 // cut ends (green, following any tilt) and the stops (yellow, labelled with their sizes).
 export function drawOverlay(frameRgb, r) {
-  const { width, height } = r.frames, g = { axis: r.axis, frameSize: r.frameSize, width, height };
+  const { width, height } = r.frames, g = { axis: r.axis, frameSize: r.frameSize, width, height, scale: r.frames.scale };
   const canvas = new Canvas(width, height, Uint8Array.from(frameRgb));
   const scale = Math.max(2, Math.round(Math.min(width, height) / 300));
   const label = (a, s, color, slot) => {
     const along = Math.round(a) + (slot % 2 ? 4 : -9 * scale - 4);
-    r.axis === "x" ? canvas.text(along, 8 + slot * 12 * scale, s, color, scale) : canvas.text(8 + slot * 70 * scale, along, s, color, scale);
+    r.axis === "x" ? canvas.text(along, 8 + slot * 12 * scale, s, color, scale)
+      : canvas.text(8 + slot * Math.min(70 * scale, Math.floor((width - 40 * scale) / 6)), along, s, color, scale);
   };
   r.stops.forEach((s, i) => { const a = frameToRaw(s.px, g); canvas.across(r.axis, () => a, COLORS.stop, 1, 6); if (s.size !== null) label(a, String(s.size), COLORS.stop, 4 + (i % 2)); });
   if (r.cutEnds?.px !== null && r.cutEnds?.px !== undefined) {
@@ -461,7 +529,13 @@ export async function finishCheck({ base, geometry, judged, cutEnds, frameRgb, o
   if (geometry.bladeLinePx !== null && cutEnds?.px !== null && cutEnds?.px !== undefined && Math.abs(geometry.bladeLinePx - cutEnds.px) > tolerancePx)
     record.warnings.push({ code: "blade_line_off", message: `The stored blade line at ${geometry.bladeLinePx} px is ${round(Math.abs(geometry.bladeLinePx - cutEnds.px), 2)} px from the cut ends: pre-cut lengths are off by about ${geometry.inPerPx ? round(Math.abs(geometry.bladeLinePx - cutEnds.px) * geometry.inPerPx, 2) : "?"} in.` });
   if (Math.abs(geometry.rotationDeg ?? 0) >= 0.5)
-    record.warnings.push({ code: "rotated_frame", message: `The camera rotates its analysis frame ${geometry.rotationDeg}°: the lines are drawn level and compared at the centre of the picture, where rotation moves nothing.` });
+    record.warnings.push(record.frames?.space === "analysis"
+      ? { code: "rotated_frame", message: `The camera rotates its analysis frame ${geometry.rotationDeg}°: the frames were ${record.frames.resize === "BOX" ? "letterboxed (BOX)" : record.frames.resize === "CROP" ? "centre-cropped (CROP)" : "stretched"} and rotated the same way before the lines were drawn and the cut ends measured.` }
+      : { code: "rotated_frame_not_applied", message: `The camera rotates its analysis frame ${geometry.rotationDeg}°, but this record's picture is the unrotated video, so its lines and cut ends are not valid. Run check again on the clip.` });
+  if (record.frames?.resizeAssumed)
+    record.warnings.push({ code: "resize_assumed", message: `The camera's ResizeMethod is unknown, so ${record.frames.resize} was assumed. If the picture does not match the live view, pass --resize BOX or CROP.` });
+  if (record.frames?.perspective)
+    record.warnings.push({ code: "perspective_not_applied", message: "The camera has a trim saw perspective correction, which this check does not reproduce: compare the picture with the live view before trusting it." });
   const { overlay, zoom } = drawOverlay(frameRgb, record);
   await writePrivate(path.join(out, "overlay.png"), overlay);
   await writePrivate(path.join(out, "overlay-zoom.png"), zoom);
@@ -513,6 +587,14 @@ export async function check(o, deps = {}) {
   if (!(seconds >= 2 && seconds <= 30)) throw new Error("--seconds must be 2 to 30");
   if (!(fps >= 1 && fps <= 10)) throw new Error("--fps must be 1 to 10");
   let meta, dataSource, camera = o.identity ?? null, video, clip = null, profile = o.profile ?? process.env.ZIRA_PROFILE ?? "prod", frameSize = o["frame-size"] ? Number(o["frame-size"]) : null;
+  let resize = o.resize ? String(o.resize).toUpperCase() : null, perspective = false;
+  if (resize !== null && !["CROP", "BOX", "STRETCH"].includes(resize)) throw new Error("--resize must be CROP, BOX or STRETCH");
+  const fromSettings = settings => {
+    if (!settings || typeof settings !== "object") return;
+    if (frameSize === null) frameSize = num(settings.FrameSize);
+    if (resize === null && typeof settings.ResizeMethod === "string" && settings.ResizeMethod.trim()) resize = settings.ResizeMethod.trim().toUpperCase();
+    perspective = typeof settings.TrimSawPerspectiveV1 === "string" && settings.TrimSawPerspectiveV1.trim() !== "";
+  };
   if (o.status || o.video) {
     if (!o.status || !o.video) throw new Error("Offline checks need both --status FILE and --video FILE");
     const saved = JSON.parse(await readFile(o.status, "utf8"));
@@ -521,6 +603,7 @@ export async function check(o, deps = {}) {
     if (!id) throw new Error("--data-source-id is required with --status and --video");
     dataSource = { id: String(id), name: saved.dataSource?.name ?? null };
     camera = camera ?? saved.camera ?? null;
+    fromSettings(saved.settings ?? saved.cv?.settings);
     video = path.resolve(o.video);
     clip = { file: path.basename(video), recordedAtLocal: parseRawVideoName(video)?.recordedAtLocal ?? null, local: true };
   } else {
@@ -531,7 +614,7 @@ export async function check(o, deps = {}) {
     meta = trimsawMetaOf(live.message);
     camera = live.camera;
     dataSource = { id: ds.id, name: ds.name, site: ds.site?.name ?? null };
-    if (frameSize === null) frameSize = num((await call("GET", route("/devices/all", { meterIds: ds.id, expand: "true" }))).data?.[0]?.cv?.settings?.FrameSize);
+    fromSettings((await call("GET", route("/devices/all", { meterIds: ds.id, expand: "true" }))).data?.[0]?.cv?.settings);
     const listed = await listOrExplain(call, ds.id, { from: o.from, to: o.to, limit: 50 }, { profile });
     const raws = listed.videos.filter(v => parseRawVideoName(v.file)).sort((a, b) => parseRawVideoName(b.file).recordedAtLocal.localeCompare(parseRawVideoName(a.file).recordedAtLocal));
     const chosen = o.clip ? listed.videos.find(v => v.file === o.clip || v.name === o.clip) : raws[0];
@@ -561,18 +644,25 @@ export async function check(o, deps = {}) {
     } catch (error) { if (!w || error instanceof Blocked) throw error; }
   }
   if (!reads.length) throw new Error("No frames could be read from the clip at --at");
+  // Every frame is turned into the camera's own analysis frame first (resize, then rotation), so the
+  // stops and saw are level lines on the picture and the board ends are measured along the board axis.
+  const source = { width: reads[0].width, height: reads[0].height };
+  const resizeAssumed = resize === null;
+  const mapping = analysisMapping({ ...source, frameSize, resize: resize ?? "CROP", rotation: geometry.rotationDeg ?? 0 });
+  const renderer = analysisRenderer(mapping);
+  for (const rd of reads) {
+    if (rd.width !== source.width || rd.height !== source.height) throw new Error("The clip's frame size changed between windows");
+    rd.frames = rd.frames.map(f => renderer.render(f));
+    rd.width = rd.height = renderer.size;
+  }
   const read = reads[0];
-  const g = { axis: geometry.axis, frameSize, width: read.width, height: read.height };
-  const pxPerFrame = read.height / frameSize;
+  const g = { axis: geometry.axis, frameSize, width: read.width, height: read.height, scale: renderer.scale };
+  const pxPerFrame = renderer.scale;
   const meanStop = geometry.stops.length ? geometry.stops.reduce((s, x) => s + x.px, 0) / geometry.stops.length : null;
   const dir = meanStop !== null ? Math.sign(judged.px - meanStop) || 1 : geometry.stopEnd === "HIGH" ? -1 : 1;
   const searchPx = o["search-px"] === undefined ? SEARCH_PX : Number(o["search-px"]);
-  const across = geometry.axis === "x" ? read.height : read.width;
-  // Only the frame square the camera analyses (its full height, centred).
-  const half = geometry.axis === "x" ? read.height / 2 : Math.min(read.width, read.height) / 2;
-  const span = [Math.max(0, Math.floor(across / 2 - half)), Math.min(across, Math.ceil(across / 2 + half))];
   const perWindow = reads.map(rd => ({ at: rd.at, ...detectCutEnds(rd.frames, { width: rd.width, height: rd.height, axis: geometry.axis, sawRaw: frameToRaw(judged.px, g), dir,
-    searchRaw: searchPx * pxPerFrame, minRunRaw: Math.max(4, Math.round(4 * pxPerFrame)), pxPerFrame, span }) }));
+    searchRaw: searchPx * pxPerFrame, minRunRaw: Math.max(4, Math.round(4 * pxPerFrame)), pxPerFrame }) }));
   const detected = combineWindows(perWindow, { pxPerFrame, need: Math.min(2, reads.length) });
   const bestRead = reads[detected.window ?? 0];
   const cutEnds = manual !== null ? { found: true, px: round(manual, 2), source: "manual", detected: { found: detected.found, ...(detected.why ? { why: detected.why } : {}) } }
@@ -581,11 +671,13 @@ export async function check(o, deps = {}) {
         framesUsed: detected.framesUsed, groups: detected.groups, spreadPx: detected.spreadFramePx, tiltPerPx: detected.tiltPerPx, windows: detected.windows }
       : { found: false, px: null, source: "frames", why: detected.why, votes: detected.votes ?? 0, windows: detected.windows };
   const best = Math.min(bestRead.frames.length - 1, detected.bestFrame ?? 0);
-  const frameRgb = (deps.readColorFrame ?? readColorFrame)(video, bestRead.at + best / fps, { width: read.width, height: read.height });
+  const frameRgb = renderer.render((deps.readColorFrame ?? readColorFrame)(video, bestRead.at + best / fps, source), 3);
   await writePrivate(path.join(out, "frame.rgb"), frameRgb);
   const ageHours = clip?.recordedAtLocal ? (Date.now() - Date.parse(`${clip.recordedAtLocal}Z`)) / 3600000 : null;
   const base = { profile, dataSource, camera, clip: { ...clip, ...(ageHours !== null ? { ageDaysApprox: round(ageHours / 24, 1) } : {}) },
-    frames: { width: read.width, height: read.height, count: reads.reduce((n, rd) => n + rd.frames.length, 0), windows: reads.map(rd => rd.at), seconds, fps }, frameSize };
+    frames: { space: "analysis", width: read.width, height: read.height, scale: renderer.scale, source, resize: mapping.resize, ...(resizeAssumed ? { resizeAssumed: true } : {}),
+      rotationDeg: mapping.rotation, ...(perspective ? { perspective: true } : {}),
+      count: reads.reduce((n, rd) => n + rd.frames.length, 0), windows: reads.map(rd => rd.at), seconds, fps }, frameSize };
   const result = await finishCheck({ base, geometry, judged, cutEnds, frameRgb, out, tolerancePx, now: deps.now?.() });
   if (ageHours !== null && ageHours > 72) {
     result.warnings.push({ code: "old_clip", message: `The newest raw recording is about ${Math.round(ageHours / 24)} days old: if the camera moved since, record a fresh clip while boards are cut and check again.` });
@@ -615,7 +707,7 @@ export async function main(args = process.argv.slice(2), deps = {}) {
   if (!["check", "approve", "require"].includes(cmd)) throw new Error("Choose check, approve or require; run with --help");
   const { values: o } = parseArgs({ args: args.slice(1), options: Object.fromEntries([
     "device-id", "data-source-id", "identity", "proposed-saw-px", "saw-px", "from", "to", "clip", "at", "seconds", "fps", "search-px", "tolerance-px",
-    "frame-size", "out", "status", "video", "from-record", "cut-ends-px", "windows", "record", "words", "max-age-hours", "profile", "receipts",
+    "frame-size", "resize", "out", "status", "video", "from-record", "cut-ends-px", "windows", "record", "words", "max-age-hours", "profile", "receipts",
   ].map(k => [k, { type: "string" }]).concat([["confirm", { type: "boolean" }]])) });
   if (cmd === "check") return check(o, deps);
   if (cmd === "approve") return approve(o, deps);

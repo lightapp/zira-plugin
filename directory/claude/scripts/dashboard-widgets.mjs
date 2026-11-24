@@ -232,6 +232,12 @@ export function seriesWarnings(widgets) {
   const warnings = [];
   for (const w of widgets) {
     const s = w.settings;
+    // groupBy "event_date" is the raw reading timestamp: the axis shows unformatted labels such as
+    // "2026-11-18 00:00:00" (Muli, 2026-11-24). "inherit_from_widget" (Auto in the editor) follows the
+    // dashboard interval and formats them ("Nov 18").
+    if (w.type === 'dataResearch' && (s.groupBy ?? []).includes('event_date'))
+      warnings.push({ key:w.key, name:s.name, code:'raw_time_axis',
+        message:`"${s.name}" groups by event_date, the raw reading timestamp, so its labels show unformatted times such as "2026-11-18 00:00:00". Group by inherit_from_widget (Auto in Zira's editor), which follows the dashboard interval and formats the labels, or by a fixed resolution such as event_date_day.` });
     if (w.type !== 'dataResearch' || !['2','4'].includes(s.chartType)) continue;
     const shown = s.aggregations.filter(a => a.hide !== 'off');
     if (shown.length < 2) continue;
@@ -452,7 +458,8 @@ Types: dataResearch (KPI/grouped KPI/table/column/bar/pie/time series), header, 
   custom (Data Research settings plus devices:[IDs]: a chart on data sources from any sites of the company).
 aiSummary stores a question and selected analytical widgets; it does not run AI or schedule reports.
 context reads metric schemas and saved widgets; save validates and previews exact payload/layout.
-Preview warnings (first_series_categories) flag column/bar charts that may drop categories.
+Preview warnings flag column/bar charts that may drop categories (first_series_categories) and
+time axes grouped by the raw event_date timestamp (raw_time_axis; use inherit_from_widget, Auto).
 --apply saves once with receipt and read-back. Partial/unknown writes stop; never replay a batch.
 --allow-cross-site (context only, read-only) also describes a dashboard whose data sources belong to
 other sites and lists them as crossSiteSources; save always refuses such a dashboard.

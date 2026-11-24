@@ -41,7 +41,8 @@ A company-level dashboard is a dashboard of the company itself: it has no site (
   - A field owned by another site is refused ("meter schema and metric must belong to the same site"); Use a field of the aggregator's own site or a global field (`context` and the form editor show which), for example the aggregator site's own Site list field and a global Machine Name field.
   - Don't group by a measured value such as a length: every distinct value becomes a row. On a fleet of 34 trimsaws, grouping by measured length made 37,000 rows a week and the current week timed out after 29 seconds. Use `avg`, `max` or `min` instead; grouping by stop and cut state gave 1,700 rows and loaded in 1.5 seconds.
   - The first load of a new aggregator's past week can fail once while Zira prepares the file; reload.
-- **Dates:** every aggregator row is one source's local production day (its site's time zone and day start), in `event_date`. Daily charts can group by `event_date_day` or `event_date`.
+- **Dates:** every aggregator row is one source's local production day (its site's time zone and day start), in `event_date`. Group time charts by `inherit_from_widget` (Auto) with the dashboard interval set to daily: the axis shows formatted days (`Nov 18`). Not by raw `event_date`, whose labels are unformatted timestamps.
+- **Simple count KPIs:** number of sites or saws is a distinct count (operator `10`) of the Site field or of a derived text key such as `text(m<site>, " / ", m<machine name>)` (machine names repeat across sites), with an aggregation filter Units > 0 so a source that posted nothing in the range is not counted. Put these and the main total (boards, pallets) at the top of a section; ratios and shares go below.
 
 ## Native widgets across sites
 - Attach the saws at creation time. Then group by `meter_name` (one row per saw) or filter with `meter_id` IN, as on any dashboard.

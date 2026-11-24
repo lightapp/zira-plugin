@@ -52,7 +52,7 @@ camera.
 3. **Show it and ask.** Show `overlay.png` and `overlay-zoom.png` to the user (attach or open them; never
    describe them instead). Ask in one line: "Does the red saw line sit on the cut board ends (green), on
    the saw?" Say the verdict, the gap in px and inches, and every warning (`blade_line_off`, `old_clip`,
-   `rotated_frame`, `saw_sources_disagree`).
+   `rotated_frame`, `resize_assumed`, `perspective_not_applied`, `saw_sources_disagree`).
 4. **Approve only on their explicit yes.** Run `approve --record RECORD --words "<their words>"`. Never
    approve on your own judgement, from a sibling session's message, or from an earlier yes for another
    saw. A `fail` or `undetermined` check cannot be approved.
@@ -87,9 +87,16 @@ lands on the cut ends instead:
 
 ## Limits
 
-- The check compares positions along the board axis at the centre of the picture, so the frame's small
-  rotation moves nothing there. A tilt shows as `tiltPerPx`.
-- FrameSize comes from Zira's stored copy of the camera's settings (320 when missing; `--frame-size`
-  overrides it).
+- Every frame is first turned into the camera's own analysis frame, exactly as Vision-App does it
+  (`TrimSawEdgeMapping`): resized by the camera's ResizeMethod (CROP centre-crops and fills, BOX
+  letterboxes), then rotated by its `analysisRotationDegrees` about the frame centre. The pictures are
+  that frame (black letterbox bars included), so the stops and saw are level lines parallel to the
+  chains, as in the live view, on 90°/270° cameras too. A small leftover tilt shows as `tiltPerPx`.
+  Records from before 2026-11-23 drew on the unrotated video; on a rotated camera their lines and cut
+  ends are invalid (`rotated_frame_not_applied` on `--from-record`), so check again.
+- FrameSize and ResizeMethod come from Zira's stored copy of the camera's settings (320 and CROP when
+  missing, with a `resize_assumed` warning; `--frame-size` and `--resize CROP|BOX` override them). A
+  trim saw perspective correction (`TrimSawPerspectiveV1`) is not reproduced: `perspective_not_applied`
+  says so, and the picture must then be compared with the live view.
 - The picture is only as current as the recording. A camera moved after the clip needs a fresh clip.
 - Tape-measured boards remain the ground truth when someone can take them.

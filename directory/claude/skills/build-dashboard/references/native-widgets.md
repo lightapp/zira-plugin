@@ -17,7 +17,7 @@ Contract inspected against Zira web's widget editors, `dataResearchUtilsWeb.js`,
       "name": "Output by day",
       "description": "Sum of Units, including all selected sources.",
       "chartType": "5",
-      "groupBy": ["event_date_day"],
+      "groupBy": ["inherit_from_widget"],
       "aggregations": [{"id":"A_0123abcd","metric":"86","operator":"2","name":"Units","hide":"on","yAxis":0,"filters":[],"timeSeriesChartType":"2","color":"#1976d2"}],
       "customAgg": [], "derivedMetrics": [], "filters": []
     },
@@ -78,11 +78,11 @@ Widget type is `15`. `chartType` selects component subtype:
 | `isCenterLabel` | Centered label presentation where supported |
 | `agentQuestion` | Saved optional AI question; saving it doesn't run or schedule a report |
 
-Time dimensions: `inherit_from_widget` (dashboard interval), `event_date_minutes`, `event_date_5_minutes`, `event_date_15_minutes`, `event_date_hour`, `event_date_day`, `event_date_week`, `event_date_month`. Minute resolution is intended for ranges ≤8 days; five/fifteen minutes ≤32 days; hourly ≤366 days. Device dimensions: `meter_id`, `meter_name`. Respect the dashboard's timezone, shift/day offset and first weekday; calendar midnight and production-day start need not coincide.
+Time dimensions: `inherit_from_widget` (shown as **Auto** in Zira's editor: follows the dashboard interval and formats the axis labels, e.g. `Nov 18`; the default for any time axis), `event_date_minutes`, `event_date_5_minutes`, `event_date_15_minutes`, `event_date_hour`, `event_date_day`, `event_date_week`, `event_date_month`. Minute resolution is intended for ranges ≤8 days; five/fifteen minutes ≤32 days; hourly ≤366 days. Do not group a chart by the raw `event_date` timestamp: its axis shows unformatted labels such as `2026-11-18 00:00:00` (the save preview warns `raw_time_axis`). Device dimensions: `meter_id`, `meter_name`. Respect the dashboard's timezone, shift/day offset and first weekday; calendar midnight and production-day start need not coincide.
 
 Base aggregation: `{id,metric,operator,name,color,timeSeriesChartType,hide,yAxis,filters}`. `name` sets the legend/table label (`label` is accepted by the helper as an alias and normalized to `name`). A `name` may contain `${…}` label templates filled in from the series' plotted points, e.g. `Total (${SUM})` or `Peak ${MAX} at ${MAX_TIME}`: variables `SUM`, `AVG`, `MIN`, `MAX`, `COUNT`, `FIRST`, `LAST`, `MIN_MAX_RANGE`, `FIRST_LAST_RANGE`, `METRIC`, `FUNCTION`, `FIRST_TIME`, `LAST_TIME`, `MIN_TIME`, `MAX_TIME`, `FROM_DATE`, `TO_DATE`, `FIRST_LAST_TIME_RANGE`, with the same mathJS functions as `customAgg`; anything that cannot be evaluated stays as typed, and stacked segments are not templated. `defaultName` is optional editor text. IDs are stable `A_` plus eight hex digits. Operators: `1` average, `2` sum, `4` max, `5` min, `6` count, `10` distinct count, `11` first, `12` last. Text supports only count/distinct/first/last; numeric/list support all above; timestamp/image/boolean don't support first/last in the current contract. `3` percentage exists in the enum but isn't a normal metric operator; calculate an explicit numerator/denominator instead. COUNT counts readings, not boards/items represented by those readings.
 
-Series display: `hide:"on"` shows it, `"hide"` keeps a disabled legend entry, `"off"` hides helper series but retains them for formulas. `yAxis` is a zero-based index. `timeSeriesChartType:"5"` line or `"2"` column applies only to column/time-series charts. Omit it on pie, bar and KPI/table widgets: a series override can turn the whole presentation into columns. Use consistent hex colors such as blue `#1976d2`, green `#388e3c`, amber `#fbc02d`, red `#d32f2f`, purple `#7b1fa2`.
+Series display: `hide:"on"` shows it (yes, "on" means shown; a KPI whose only series is `"off"` renders blank), `"hide"` keeps a disabled legend entry, `"off"` hides helper series but retains them for formulas. `yAxis` is a zero-based index. `timeSeriesChartType:"5"` line or `"2"` column applies only to column/time-series charts. Omit it on pie, bar and KPI/table widgets: a series override can turn the whole presentation into columns. Use consistent hex colors such as blue `#1976d2`, green `#388e3c`, amber `#fbc02d`, red `#d32f2f`, purple `#7b1fa2`.
 
 ### Column and bar categories come from the first visible series
 

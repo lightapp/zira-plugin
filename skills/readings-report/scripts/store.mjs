@@ -9,7 +9,7 @@ import { Blocked, ZiraApiError, fingerprint, id, link, resolveSite, siteDataSour
 import { healthProfile } from "../../health-report/scripts/api.mjs";
 import { readJson, writePrivate } from "../../health-report/scripts/storage.mjs";
 import { formatLocal, readingValue } from "./query-core.mjs";
-import { WEEK_MS, apiWeek, emptyWeek, fileWeek, listFiles, prepareFiles, weekKey, weeksBetween } from "./source.mjs";
+import { WEEK_MS, apiWeek, cachedFinal, emptyWeek, weekFinal, fileWeek, listFiles, prepareFiles, weekKey, weeksBetween } from "./source.mjs";
 
 export const LIMITS = { devices: 10, days: 366, apiDeviceWeeks: 20, fileDeviceWeeks: 530, requests: 400, prepareWaitSeconds: 60 };
 
@@ -148,13 +148,15 @@ export async function fetchDataset({
       for (const p of plan) {
         const f = files.get(key(p.deviceId, p.start));
         const file = chunkFile(root, profile, p.deviceId, weekKey(p.start));
-        if (f?.outOfDate || (f && !f.url)) continue; // left for analysis/data
+        // Left for analysis/data: stale or missing links, and weeks not yet final, whose
+        // reading file is only a snapshot from whenever Zira last prepared it.
+        if (f?.outOfDate || (f && !f.url) || !weekFinal(p.end, now)) continue;
         const version = f ? f.version : "empty";
         const cached = refresh ? null : await readChunk(file);
-        if (cached?.source === "file" && cached.version === version) { chunks.set(key(p.deviceId, p.start), cached); continue; }
+        if (cached?.source === "file" && cached.version === version && cachedFinal(cached, p.end, now)) { chunks.set(key(p.deviceId, p.start), cached); continue; }
         let chunk;
         try {
-          chunk = f ? await fileWeek(f, { download }) : emptyWeek(p.deviceId, p.start, version);
+          chunk = f ? await fileWeek(f, { download, now }) : emptyWeek(p.deviceId, p.start, version, now);
         } catch (error) {
           if (source === "files") throw error;
           failedDownloads++;
@@ -177,14 +179,14 @@ export async function fetchDataset({
     }
   }
 
-  // Everything else from analysis/data. Completed weeks are reused from the cache; the
-  // current week is cached for this dataset but read again by the next fetch.
+  // Everything else from analysis/data. Final weeks are reused from the cache; the current
+  // week (and the day after it) is cached for this dataset but read again by the next fetch.
   const rest = plan.filter(p => !chunks.has(key(p.deviceId, p.start)));
   const needed = [];
   for (const p of rest) {
     const cached = refresh ? null : await readChunk(chunkFile(root, profile, p.deviceId, weekKey(p.start)));
     // With files available, a week left here has a newer or stale file, so its cached copy is outdated.
-    if (cached?.final && !(filesState === "available" && cached.source === "file")) chunks.set(key(p.deviceId, p.start), cached);
+    if (cachedFinal(cached, p.end, now) && !(filesState === "available" && cached.source === "file")) chunks.set(key(p.deviceId, p.start), cached);
     else needed.push(p);
   }
   if (needed.length > LIMITS.apiDeviceWeeks)

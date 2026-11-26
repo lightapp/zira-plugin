@@ -49,7 +49,7 @@ The standalone legacy health-report skill archive is a CLI-only artifact, not th
 | `build.mjs` (build-dataset, internal builds) | `build_dataset` |
 | `compare.mjs` (compare-models, internal builds) | `compare_models` |
 | `form-entries.mjs` (edit-form-entries, internal builds) | `form_entries` |
-| `collection.mjs` (setup-collection, internal builds) | `collection` |
+| `collection.mjs` (setup-collection) | `collection` |
 | `defects.mjs` | `find_defects` |
 | Inspect Nail Images `runtime.mjs` and packaged Python analyses | `nail_images` |
 | `vision-config.mjs` (configure-vision-camera, internal builds) | `vision_config` |

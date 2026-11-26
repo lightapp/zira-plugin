@@ -1,0 +1,6 @@
+interface:
+  display_name: "Set Up Collection"
+  short_description: "Connect a Modbus TCP meter to a data source, test it and check that it is collecting"
+  icon_small: "./assets/zira-icon.svg"
+  icon_large: "./assets/zira-icon.svg"
+  default_prompt: "Use $setup-collection to check whether the meters at my site are collecting."

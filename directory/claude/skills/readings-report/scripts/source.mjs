@@ -8,6 +8,15 @@ import { parseLocal, readingValue } from "./query-core.mjs";
 
 export const WEEK_MS = 7 * 86400000;
 export const DAY_MS = 86400000;
+// A week is final (cached for good) only a day after its UTC end: that covers every site's
+// time zone and late uploads. Never from a quiet saw, a day boundary or a reading file that
+// Zira prepared mid-week: those are snapshots and miss everything after them.
+export const FINAL_MARGIN_MS = DAY_MS;
+export const weekFinal = (end, now) => end + FINAL_MARGIN_MS <= now;
+// A cached week is trusted only if it says final and was fetched after the week became final,
+// so a chunk wrongly saved final mid-week by an older version is fetched again.
+export const cachedFinal = (chunk, end, now) =>
+  chunk?.final === true && weekFinal(end, now) && Date.parse(chunk.fetchedAt) >= end + FINAL_MARGIN_MS;
 const RESERVED = new Set(["event_date", "event_date_with_offset", "event_date_at_site", "meter_id", "meter_name"]);
 const MAX_ROWS_PER_CHUNK = 400000;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
@@ -50,7 +59,7 @@ function siteMs(u, row) {
 
 // Turn API or CSV rows into a columnar chunk. Site time comes from event_date_at_site;
 // without it the chunk falls back to UTC and says so.
-export function toChunk(rows, deviceId, { start, end, source, version = null, final }) {
+export function toChunk(rows, deviceId, { start, end, source, version = null, final, now = Date.now() }) {
   if (rows.length > MAX_ROWS_PER_CHUNK) throw new Error(`More than ${MAX_ROWS_PER_CHUNK} readings in one week for data source ${deviceId}`);
   const kept = [];
   let invalid = 0, foreign = 0, siteTime = true;
@@ -75,7 +84,7 @@ export function toChunk(rows, deviceId, { start, end, source, version = null, fi
   });
   return {
     v: 1, deviceId: String(deviceId), week: weekKey(start), start: new Date(start).toISOString(), end: new Date(end).toISOString(),
-    source, version, final, fetchedAt: new Date().toISOString(), timeBasis: siteTime || !kept.length ? "site" : "utc",
+    source, version, final: final === true && weekFinal(end, now), fetchedAt: new Date(now).toISOString(), timeBasis: siteTime || !kept.length ? "site" : "utc",
     rows: kept.length, invalid, foreign,
     u: kept.map(k => k[0]), t: kept.map(k => k[1]), cols,
   };
@@ -148,7 +157,7 @@ export async function apiWeek(call, deviceId, start, end, now) {
     rows = [];
     for (let d = start; d < stop; d += DAY_MS) rows.push(...await read(d, Math.min(d + DAY_MS, stop)));
   }
-  return toChunk(rows, deviceId, { start, end, source: "api", final: end <= now - 3600000 });
+  return toChunk(rows, deviceId, { start, end, source: "api", final: weekFinal(end, now), now });
 }
 
 // Reading files for up to 5 data sources over the weeks in [from, to).
@@ -166,10 +175,11 @@ export async function prepareFiles(call, deviceId, from, to) {
   await call("GET", `/meters-data/prepare-readings-files?${new URLSearchParams({ meterId: deviceId, startDate: apiTime(from), endDate: apiTime(to) })}`);
 }
 
-export async function fileWeek(file, { download = downloadFile } = {}) {
+export async function fileWeek(file, { download = downloadFile, now = Date.now() } = {}) {
   const rows = parseCsv(await download(file.url));
-  return toChunk(rows, file.deviceId, { start: file.start, end: file.start + WEEK_MS, source: "file", version: file.version, final: true });
+  const end = file.start + WEEK_MS;
+  return toChunk(rows, file.deviceId, { start: file.start, end, source: "file", version: file.version, final: weekFinal(end, now), now });
 }
 
-export const emptyWeek = (deviceId, start, version) =>
-  toChunk([], deviceId, { start, end: start + WEEK_MS, source: "file", version, final: true });
+export const emptyWeek = (deviceId, start, version, now = Date.now()) =>
+  toChunk([], deviceId, { start, end: start + WEEK_MS, source: "file", version, final: weekFinal(start + WEEK_MS, now), now });

@@ -1,7 +1,6 @@
 {
-  "version": "0.3.51-preview.43",
+  "version": "0.3.51-preview.44",
   "notes": [
-    "Connect a meter from chat: add a Modbus TCP power meter or sensor to its data source, test it and check that it is collecting (new Set Up Collection action; site admins).",
-    "When a meter's gateway needs your site's secure network (VPN), Zira gives you the direct link and carries on when you say it is done."
+    "Camera settings from chat: add or remove count lines on Vision cameras, for example a band saw's side lines copied from a sister saw (internal preview skill)."
   ]
 }
